@@ -1,0 +1,15 @@
+<!doctype html><html><head>
+<link rel="stylesheet" href="/static/vendor/xterm4/xterm.css?v=20260608c" />
+<script src="/static/vendor/xterm4/xterm.js?v=20260608c"></script>
+<script src="/static/vendor/xterm4-addon-fit/addon-fit.js?v=20260608c"></script>
+</head><body><div id="term" style="height:240px;width:800px"></div><div id="out"></div><script>
+let msg = 'Terminal=' + typeof window.Terminal + '; keys=' + (window.Terminal ? Object.keys(window.Terminal).join(',') : '-') + '; FitAddon=' + typeof window.FitAddon;
+try {
+  const C = window.Terminal && window.Terminal.Terminal ? window.Terminal.Terminal : window.Terminal;
+  const t = new C();
+  t.open(document.getElementById('term'));
+  t.write('ok');
+  msg += '; new=ok';
+} catch(e) { msg += '; new_error=' + e.message; }
+document.getElementById('out').textContent = msg;
+</script></body></html>

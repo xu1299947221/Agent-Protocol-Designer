@@ -1,0 +1,29 @@
+# secrets / local config
+.env
+.env.*
+!.env.example
+
+# runtime data
+data/
+
+# python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# virtualenvs
+.venv/
+venv/
+
+# node / frontend caches
+node_modules/
+dist/
+build/
+
+# logs / temp
+*.log
+*.tmp
+.DS_Store
+/tmp/
