@@ -2,6 +2,8 @@
 
 > 本文是 Delegated Agent 模式的完整蓝图。它不只描述第一阶段怎么做，而是把最终产品形态、APD 平台侧交互、生成 Agent 的独立部署形态、多用户、安全、队列、沙箱、数据模型、观测、版本和演进路径整体设计清楚。
 
+> 当前实现状态：第一阶段 V1 已完成。APD 已能生成独立部署型 Delegated Agent zip，生成工程包含 FastAPI、Web 任务控制台、fake runner、真实 open_claude runner、日志/产物 API、README、Dockerfile 和 docker-compose.yml 草案。完整使用说明见 `docs/delegated_agent_usage.md`。
+
 ## 1. 设计目标
 
 Delegated Agent 模式的最终目标：
@@ -1937,7 +1939,7 @@ APD 能生成一个内置 open_claude 的独立 Agent 工程，
 
 ```text
 新增 delegated generator
-新增 delegated templates
+新增 delegated templates（V1 实际采用生成器内嵌模板，后续可拆目录）
 新增 zip 下载接口
 新增 WebUI 下载入口
 新增生成器测试
@@ -1976,6 +1978,17 @@ zip 包含 open_claude dist/src/package
 README 能让新用户照着启动
 ```
 
+当前 V1 验收状态：
+
+```text
+APD zip 下载：已完成。
+zip 包含 open_claude dist/src/package：已完成，且不复制 node_modules/.git。
+解压后 fake runner 能跑通：已完成并有自动化测试。
+真实 runner：代码路径已完成，真实运行依赖部署环境的模型网关、Key、Node.js 和 open_claude 首次确认状态。
+前端显示任务状态和下载 report.md：已完成。
+README 和独立使用文档：已完成。
+```
+
 ## 49. 开工前 Checklist
 
 正式编码前确认：
@@ -2005,6 +2018,13 @@ fake runner 端到端通过。
 文档包含本地启动和 Docker 启动说明。
 失败时能看到 stderr/stdout 和明确错误。
 不遗留与最终接口/路径冲突的旧说明。
+```
+
+当前 DoD 结论：
+
+```text
+代码实现、生成器单测、zip 结构、fake runner 端到端、本地启动说明、Docker 启动说明、stdout/stderr 错误可见性均已完成。
+真实 open_claude 最小任务的稳定性不完全由 APD 代码决定，还依赖目标部署环境；V1 已提供真实 runner 路径、配置映射、超时、日志和错误提示。
 ```
 
 ## 51. 术语表
@@ -2043,21 +2063,27 @@ open_claude 的 dist/cli.js 可作为命令行入口运行。
 
 如果这些假设变化，需要回到架构文档重新评估。
 
-## 53. 未决问题
+## 53. 已决问题与后续未决问题
 
-开发前或开发中还需要逐步确认：
+第一阶段已经确认：
 
 ```text
-open_claude 打包完整 src + dist 后 zip 体积是否可接受？
+open_claude 打包完整 src + dist 后 zip 体积可接受，当前真实包约几十 MB。
+V1 严格只支持 message 输入。
+生成工程默认中文 UI。
+API Token 默认空，由用户按需启用。
+fake runner 默认开启。
+```
+
+后续 V1.1/V2 仍需确认：
+
+```text
 dist/cli.js 在无 node_modules 情况下是否稳定可运行？
 Dockerfile 是否需要执行 npm/pnpm install？
 真实 open_claude 首次运行是否一定会要求交互确认？
 是否需要为 open_claude 增加非交互启动参数？
-V1 是否要支持单文件上传，还是严格只做 message？
-生成工程是否需要默认中文 UI？
-API Token 是否默认生成随机值，还是默认空？
-fake runner 是否默认开启，还是 README 指导开启？
 真实 Runner 的最小 hello 任务是否能稳定产出 result.json？
+是否进入 V1.1 支持单文件上传，还是直接进入 V2 目录/zip 输入。
 ```
 
 这些问题不阻塞整体设计，但会影响第一阶段实现细节。
@@ -2136,8 +2162,8 @@ Artifact 下载 API
 交接时必须说明：
 
 ```text
-当前只是设计完成，尚未实现代码。
-第一阶段范围已冻结。
+当前第一阶段 V1 已完成。
+第一阶段范围已冻结并已落地。
 完整架构中的 V2/V3/V4 不进入第一阶段。
 ```
 
@@ -2199,9 +2225,10 @@ ADR 决策
 
 ```text
 总览文档：已完成，可作为方向入口。
-开发实施方案：已完成，可作为第一阶段开发依据。
+开发实施方案：已完成，并已同步 V1 实现状态。
 完整架构文档：已完成，可作为最终架构蓝图。
-代码实现：尚未开始。
+使用说明文档：已完成，见 docs/delegated_agent_usage.md。
+代码实现：第一阶段 V1 已完成。
 ```
 
 ## 57. 最终判断

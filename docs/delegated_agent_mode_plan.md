@@ -6,6 +6,8 @@
 
 > 如果三份文档出现冲突：最终架构与范围以 `delegated_agent_mode_full_architecture.md` 为准；第一阶段代码实施以 `delegated_agent_mode_development_plan.md` 为准；本文只作为方向总览。
 
+> 当前实现状态：第一阶段 V1 已完成。APD WebUI 已提供“生成 Delegated Agent zip”入口，生成工程可独立启动，默认 fake runner 可自检，并已接入真实 open_claude runner 代码路径。使用说明见 `docs/delegated_agent_usage.md`。
+
 ## 1. 背景
 
 APD 当前主线是：
@@ -594,22 +596,22 @@ Trace 回放
 | 安全边界弱 | V1 主要靠目录隔离和提示约束 | V2 必须补沙箱和权限拦截 |
 | 部署依赖 Node | open_claude 需要 Node.js | Docker 镜像内置 Node |
 
-## 21. 第一阶段实施顺序
+## 21. 第一阶段实施顺序与完成状态
 
-建议按以下顺序推进：
+第一阶段已按以下顺序完成：
 
-| 顺序 | 任务 | 产出 |
+| 顺序 | 任务 | 当前状态 |
 |---|---|---|
-| 1 | 固定 Delegated Agent 生成规范 | 本文档 |
-| 2 | 增加工程模板目录 | backend/frontend/runner/data 模板 |
-| 3 | 实现 open_claude 复制器 | 从模板源复制到 runner/open_claude |
-| 4 | 实现 V1 FastAPI Runtime | jobs/events/artifacts API |
-| 5 | 实现 openclaude_runner | 启动 dist/cli.js，收集 stdout |
-| 6 | 实现 task_pack_builder | 根据 Agent 定义生成 task_pack.md |
-| 7 | 实现 result_parser | 解析 result.json/report.md |
-| 8 | 生成 README 和部署说明 | 本机和 Docker 两种方式 |
-| 9 | 接入 APD WebUI 导出入口 | 选择 Delegated Agent 并下载 zip |
-| 10 | 用一个真实场景验证 | 项目分析 Agent 或文档处理 Agent |
+| 1 | 固定 Delegated Agent 生成规范 | 已完成 |
+| 2 | 增加工程模板 | 已完成，V1 模板内嵌在 `delegated_generator.py` |
+| 3 | 实现 open_claude 复制器 | 已完成，复制到 `runner/open_claude` 并生成 manifest |
+| 4 | 实现 V1 FastAPI Runtime | 已完成，包含 jobs/events/artifacts/logs/config API |
+| 5 | 实现 openclaude_runner | 已完成，支持 fake runner 和真实 runner |
+| 6 | 实现 task_pack_builder | 已完成，生成 `trace/task_pack.md` |
+| 7 | 实现 result_parser | 已完成，优先解析 `artifacts/result.json` |
+| 8 | 生成 README 和部署说明 | 已完成，包含本机、fake、真实 runner、Docker |
+| 9 | 接入 APD WebUI 导出入口 | 已完成，按钮为“生成 Delegated Agent zip” |
+| 10 | 用真实场景验证 | fake runner 已自动化验证，真实 runner 取决于部署环境 |
 
 ## 22. 当前结论
 

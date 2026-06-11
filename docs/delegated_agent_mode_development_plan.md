@@ -6,6 +6,8 @@
 
 > 如果本文与完整架构文档冲突：长期架构以完整架构文档为准；第一阶段编码任务和验收细节以本文为准；若冲突影响 V1 范围，必须先更新完整架构的 ADR/冻结清单。
 
+> 当前实现状态：第一阶段 V1 已完成。APD 已新增 `protocol_designer/delegated_generator.py`、`POST /api/delegated-agent/{session_id}.zip`、WebUI 下载入口、生成器测试和 fake runner 端到端测试。使用说明见 `docs/delegated_agent_usage.md`。
+
 ## 1. 开发目标
 
 V1 目标：APD 可以生成一个独立部署的 Delegated Agent 工程 zip。
@@ -66,6 +68,14 @@ protocol_designer/delegated_templates/
 | `delegated_templates/docker` | Dockerfile / docker-compose 模板 |
 | `README.md.j2` | 生成项目说明 |
 | `env.example.j2` | 生成环境变量说明 |
+
+实际 V1 实现说明：
+
+```text
+当前版本采用单文件生成器内嵌模板，没有落地 protocol_designer/delegated_templates/ 目录。
+原因是第一阶段优先保证 zip 生成、fake runner、自包含 Runtime 和 WebUI 下载闭环。
+后续如果模板继续变大，再拆分为 delegated_templates/。
+```
 
 ### 2.3 建议改动现有文件
 
@@ -719,6 +729,22 @@ V1 完成标准：
 11. 能下载 report.md。
 ```
 
+当前实现状态：
+
+```text
+1. 已完成 APD 生成 delegated-agent.zip。
+2. 已完成 zip 内置 open_claude 代码，并排除 .git、node_modules、缓存和日志。
+3. 已完成 zip 解压后无需 APD 即可启动。
+4. 已完成本机 fake runner 启动和端到端测试。
+5. 已生成 Dockerfile 和 docker-compose.yml 草案，并在 README 中写清楚边界。
+6. 已完成提交任务后创建 job 目录。
+7. 已完成 trace/task_pack.md 生成。
+8. 已完成 fake runner 和真实 open_claude runner 代码路径。
+9. 已完成 stdout.log、stderr.log、events.jsonl、job.json。
+10. 已完成 Web 页面展示任务状态、日志和产物列表。
+11. 已完成 report.md 下载接口。
+```
+
 ## 15. 开发任务拆分
 
 ### 阶段 A：生成器骨架
@@ -726,7 +752,7 @@ V1 完成标准：
 | 任务 | 文件 | 结果 |
 |---|---|---|
 | 新增生成器模块 | `protocol_designer/delegated_generator.py` | 可生成 zip |
-| 新增模板目录 | `protocol_designer/delegated_templates/` | 有 backend/frontend/docker 模板 |
+| 新增模板目录 | `protocol_designer/delegated_templates/` | V1 暂缓，模板内嵌在生成器 |
 | 新增单测 | `tests/test_delegated_agent_generator.py` | 校验 zip 结构 |
 
 ### 阶段 B：生成工程 Runtime
@@ -779,6 +805,15 @@ V1 完成标准：
 ```
 
 不要一开始就做复杂队列、权限系统和沙箱。
+
+当前执行结果：
+
+```text
+已按上述顺序完成第一阶段实现。
+fake runner 已端到端通过。
+真实 open_claude runner 已接入，真实运行仍需部署环境提供模型网关、Key、Node.js 和 open_claude 首次确认状态。
+Docker Compose 文件已生成，V1 文档明确其为轻量草案。
+```
 
 ## 17. 与 open_claude 源码的关系
 
@@ -849,6 +884,16 @@ WebUI 使用说明
 
 ```text
 Delegated Agent 适合复杂文件/项目执行任务。它会把 open_claude 打包进生成工程，生成后可以独立部署。
+```
+
+当前文档收尾状态：
+
+```text
+docs/delegated_agent_mode_plan.md：已补 V1 实现状态。
+docs/delegated_agent_mode_full_architecture.md：已补 V1 实现状态和文档状态。
+README.md：已补 Delegated Agent 入口和使用说明。
+WebUI 使用说明：已加入“Delegated Agent zip 使用说明”折叠区。
+docs/delegated_agent_usage.md：已新增完整使用手册。
 ```
 
 ## 21. 文档审查补充与修订决定
@@ -1079,7 +1124,7 @@ V1 是轻量独立部署版。
 
 不要把真实 open_claude 作为第一验收路径，否则会被模型网关、Key、首次确认和 Node 环境卡住。
 
-### 21.10 当前文档已足够进入 V1 开发
+### 21.10 当前文档已完成 V1 开发闭环
 
 审查后结论：
 
@@ -1089,13 +1134,16 @@ V1 是轻量独立部署版。
 本补充节补齐了路径可见性、fake runner、CLI 卡住、环境变量、复制审计、日志 API、安全声明和验收顺序。
 ```
 
-因此，下一步可以开始 V1 开发，建议先做：
+V1 已完成，实际落地文件为：
 
 ```text
 protocol_designer/delegated_generator.py
-protocol_designer/delegated_templates/
 tests/test_delegated_agent_generator.py
+webui_server.py
+docs/delegated_agent_usage.md
 ```
+
+说明：`protocol_designer/delegated_templates/` 在 V1 中未单独创建，模板暂时内嵌在 `delegated_generator.py` 中。
 
 ## 22. 二次审查补充：实现细节风险清单
 

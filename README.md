@@ -142,8 +142,8 @@ Web UI 中可以：
 
 - 点击 `Dynamic Workflow 架构说明` 查看架构说明
 - 正常对话即可；当系统识别到多步骤/并行/强校验/人工确认场景，会在“下一步问题”里主动询问是否进入工作流设计
-- 在导出预览里下载 `workflow.json`
-- 在导出预览里下载 `workflow_plan.md`
+- 在右侧“导出产物”里下载 `workflow.json`
+- 在右侧“导出产物”里下载 `workflow_plan.md`
 
 ## Agent Project Scaffold Generator
 
@@ -155,7 +155,7 @@ APD 可以根据已有 session 生成一个可运行 Agent Harness Demo。这个
 
 `--name` 用来指定生成项目目录名；不传时默认从会话标题或项目名推导。
 
-Web UI 也支持生成：在右侧“导出预览”区域点击 `生成脚手架 zip`，输入项目目录名后会直接下载可运行 Demo zip 包。
+Web UI 也支持生成：在右侧“导出产物”区域点击 `生成可运行 Demo zip`，输入项目目录名后会直接下载可运行 Demo zip 包。
 
 如果目录已存在，可覆盖：
 
@@ -215,6 +215,93 @@ generated/<project-name>/
 能查看 Tool Adapter：GET /tools
 能体验 Context Pack → Intent Planner → OpCall → Validator → Permission → Tool Dry-run → Store → Artifact Version → Recovery → Eval Suggestion → Trace
 真实业务逻辑在 TODO 里继续开发
+```
+
+## Delegated Agent Export
+
+APD 现在支持生成独立部署型 Delegated Agent。它不同于普通 Harness Demo：生成 zip 会内置 open_claude，把复杂文件/项目/代码执行任务委托给 open_claude，同时由生成服务负责 Job、Task Pack、Trace、Artifact、日志和 Web 控制台。
+
+适合场景：
+
+```text
+文件处理
+项目分析
+代码改造
+文档生成
+招投标分析
+知识库整理
+数据清洗
+自动测试/修复
+```
+
+Web UI 入口：
+
+```text
+右侧“导出产物” → 生成 Delegated Agent zip
+```
+
+生成接口：
+
+```text
+POST /api/delegated-agent/{session_id}.zip
+```
+
+生成工程包含：
+
+```text
+FastAPI 服务
+Web 任务控制台
+fake runner
+真实 open_claude runner
+Job 文件存储
+Task Pack 生成
+stdout/stderr/events 日志
+artifacts/result.json
+artifacts/report.md
+Dockerfile
+docker-compose.yml
+```
+
+下载后第一条验收路径默认使用 fake runner，不需要 LLM、Key 或 Node：
+
+```bash
+unzip your-agent-delegated-agent.zip
+cd your-agent/backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp ../.env.example ../.env
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+打开：
+
+```text
+http://127.0.0.1:8000
+```
+
+要接真实 open_claude，编辑生成项目根目录 `.env`：
+
+```env
+OPEN_CLAUDE_FAKE=0
+OPENAI_BASE_URL=http://your-gateway/v1
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=your-model
+```
+
+安全边界：
+
+```text
+V1 是轻量独立部署版，只适合本地或可信内网。
+真实 open_claude 具备文件读写和命令执行能力。
+不要直接暴露公网。
+生产使用前必须升级 Docker Sandbox、权限拦截、队列、审计和 RBAC。
+```
+
+完整使用说明：
+
+```text
+docs/delegated_agent_usage.md
 ```
 
 
