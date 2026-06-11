@@ -1,0 +1,92 @@
+import sys
+import zipfile
+from pathlib import Path
+
+from protocol_designer.delegated_generator import generate_delegated_agent_project
+
+
+def create_fake_open_claude(root: Path) -> Path:
+    source = root / "Openclaude-openclaude"
+    (source / "dist").mkdir(parents=True)
+    (source / "src").mkdir()
+    (source / "bin").mkdir()
+    (source / "node_modules" / "ignored").mkdir(parents=True)
+    (source / ".git").mkdir()
+    (source / "dist" / "cli.js").write_text("console.log('fake open_claude')\n", encoding="utf-8")
+    (source / "src" / "index.ts").write_text("export {}\n", encoding="utf-8")
+    (source / "bin" / "cli.js").write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    (source / "package.json").write_text('{"name":"openclaude"}\n', encoding="utf-8")
+    (source / "README.md").write_text("# OpenClaude\n", encoding="utf-8")
+    (source / "node_modules" / "ignored" / "x.js").write_text("ignored\n", encoding="utf-8")
+    (source / ".git" / "config").write_text("ignored\n", encoding="utf-8")
+    return source
+
+
+def test_delegated_agent_zip_contains_runtime_and_bundled_runner(tmp_path):
+    source = create_fake_open_claude(tmp_path)
+
+    data, manifest = generate_delegated_agent_project(
+        protocol={"project_name": "写作 Agent", "operations": [{"name": "draft"}]},
+        project_name="test delegated agent",
+        agent_name="测试委托 Agent",
+        agent_goal="验证委托执行链路",
+        default_task="生成 report.md 和 result.json",
+        open_claude_source=source,
+    )
+
+    zip_path = tmp_path / "delegated.zip"
+    zip_path.write_bytes(data)
+    names = set(zipfile.ZipFile(zip_path).namelist())
+
+    assert manifest["mode"] == "delegated_agent"
+    assert "test-delegated-agent/backend/app/main.py" in names
+    assert "test-delegated-agent/backend/app/runtime/openclaude_runner.py" in names
+    assert "test-delegated-agent/backend/app/runtime/runner_worker.py" in names
+    assert "test-delegated-agent/backend/app/templates/task_pack_template.md" in names
+    assert "test-delegated-agent/frontend/index.html" in names
+    assert "test-delegated-agent/.env.example" in names
+    assert "test-delegated-agent/Dockerfile" in names
+    assert "test-delegated-agent/runner/open_claude/Openclaude-openclaude/dist/cli.js" in names
+    assert "test-delegated-agent/runner/open_claude_manifest.json" in names
+    assert not any("node_modules" in name for name in names)
+    assert not any("/.git/" in name for name in names)
+
+
+def test_generated_backend_fake_runner_runs_end_to_end(tmp_path, monkeypatch):
+    source = create_fake_open_claude(tmp_path)
+    data, _ = generate_delegated_agent_project(
+        protocol={"project_name": "demo"},
+        project_name="demo-agent",
+        agent_name="Demo Agent",
+        agent_goal="Run fake delegated job",
+        open_claude_source=source,
+    )
+    zip_path = tmp_path / "delegated.zip"
+    zip_path.write_bytes(data)
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(tmp_path / "out")
+
+    project = tmp_path / "out" / "demo-agent"
+    for path in (project / "backend" / "app").rglob("*.py"):
+        __import__("py_compile").compile(str(path), doraise=True)
+
+    monkeypatch.setenv("OPEN_CLAUDE_FAKE", "1")
+    monkeypatch.setenv("DATA_DIR", str(project / "data"))
+    sys.path.insert(0, str(project / "backend"))
+    try:
+        from app.runtime import runner_worker, workspace_manager
+
+        job = workspace_manager.create_job("请生成测试报告")
+        runner_worker.run_job(job["job_id"])
+        detail = workspace_manager.read_job(job["job_id"])
+        artifacts = project / "data" / "jobs" / job["job_id"] / "artifacts"
+    finally:
+        sys.path.remove(str(project / "backend"))
+        for name in list(sys.modules):
+            if name == "app" or name.startswith("app."):
+                sys.modules.pop(name, None)
+
+    assert detail["status"] == "completed"
+    assert detail["result"]["summary"] == "fake runner completed"
+    assert (artifacts / "report.md").exists()
+    assert (artifacts / "result.json").exists()

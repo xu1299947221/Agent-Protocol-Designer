@@ -21,6 +21,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from protocol_designer.core import EMPTY_PROTOCOL, build_exports, design_step, fallback_step, merge_protocol
+from protocol_designer.delegated_generator import DEFAULT_OPEN_CLAUDE_SOURCE, generate_delegated_agent_project
 from protocol_designer.demo_playground import DemoPlaygroundManager
 from protocol_designer.dev_studio import DevStudioManager
 from protocol_designer.generator import generate_project_scaffold, safe_project_name
@@ -582,6 +583,39 @@ async def api_scaffold_zip(request):
         return JSONResponse({"error": str(exc)}, status_code=400)
     headers = {"Content-Disposition": 'attachment; filename="apd-scaffold.zip"'}
     return Response(buffer.getvalue(), media_type="application/zip", headers=headers)
+
+
+async def api_delegated_agent_zip(request):
+    session = get_session(request.path_params.get("session_id"))
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    protocol = session.get("protocol") or {}
+    project_name = str(payload.get("project_name") or protocol.get("project_name") or session.get("title") or "delegated-agent")
+    agent_name = str(payload.get("agent_name") or protocol.get("project_name") or session.get("title") or project_name)
+    agent_goal = str(payload.get("agent_goal") or protocol.get("domain_summary") or "接收用户任务，委托内置 open_claude 执行，并返回过程与产物。")
+    default_task = str(payload.get("default_task") or "请根据用户输入完成任务，并把最终结果写入 artifacts/report.md 和 artifacts/result.json。")
+    bundle_open_claude = bool(payload.get("bundle_open_claude", True))
+    open_claude_source = Path(str(payload.get("open_claude_source") or DEFAULT_OPEN_CLAUDE_SOURCE))
+    try:
+        data, manifest = generate_delegated_agent_project(
+            protocol=protocol,
+            project_name=project_name,
+            agent_name=agent_name,
+            agent_goal=agent_goal,
+            default_task=default_task,
+            open_claude_source=open_claude_source,
+            bundle_open_claude=bundle_open_claude,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    filename = f"{safe_project_name(project_name)}-delegated-agent.zip"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-APD-Delegated-Manifest": json.dumps({"project_name": manifest.get("project_name"), "bundled": manifest.get("bundle_open_claude")}, ensure_ascii=False),
+    }
+    return Response(data, media_type="application/zip", headers=headers)
 
 
 def build_demo_maturity_report(protocol: dict[str, Any], agent: dict[str, Any], workflow: dict[str, Any], store: dict[str, Any], tools: dict[str, Any]) -> dict[str, Any]:
@@ -1585,6 +1619,7 @@ routes = [
     Route("/api/chat", api_chat, methods=["POST"]),
     Route("/api/export/{session_id}/{name}", api_export),
     Route("/api/scaffold/{session_id}.zip", api_scaffold_zip),
+    Route("/api/delegated-agent/{session_id}.zip", api_delegated_agent_zip, methods=["POST"]),
     Route("/api/demo-playground/start", api_demo_playground_start, methods=["POST"]),
     Route("/api/demo-playground/one-click", api_demo_playground_one_click, methods=["POST"]),
     Route("/api/demo-playground/list", api_demo_playground_list),
@@ -2253,6 +2288,7 @@ HTML = r"""
             导出产物
             <span class="export-header-actions">
               <button onclick="downloadScaffold()">生成可运行 Demo zip</button>
+              <button onclick="downloadDelegatedAgent()" class="primary">生成 Delegated Agent zip</button>
               <button onclick="openDemoPlayground()">在线运行 Demo</button>
               <button onclick="openCliCollabAssistant()">打开 Agent IDE</button>
               <span class="export-actions" id="exportActions">
@@ -2317,6 +2353,30 @@ curl http://127.0.0.1:8000/store/snapshot
 # 查看 Tool Adapter dry-run 模板
 curl http://127.0.0.1:8000/tools</code></pre>
             <div class="preview-tip"><strong>重点看：</strong> `/agent/run` 返回里是否有 `tool_results`、`state_snapshot`、`artifact_versions`、`trace`；`/workflow/run` 是否有 `node_states`。</div>
+          </details>
+          <details class="preview-dev-details">
+            <summary>Delegated Agent zip 使用说明：独立部署 + fake runner + open_claude</summary>
+            <div class="desc">这个说明对应“生成 Delegated Agent zip”。它不是普通 Demo，而是一个可独立部署的任务型 Agent 服务，默认内置 open_claude，并先用 fake runner 验证闭环。</div>
+            <pre><code>unzip your-agent-delegated-agent.zip
+cd your-agent/backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp ../.env.example ../.env
+uvicorn app.main:app --host 0.0.0.0 --port 8000</code></pre>
+            <div class="desc">启动后打开 Web 控制台：</div>
+            <pre><code>http://127.0.0.1:8000</code></pre>
+            <div class="desc">第一条验收路径默认是 fake runner，不需要 LLM，不需要 Node，提交任务后应生成：</div>
+            <pre><code>data/jobs/&lt;job_id&gt;/trace/task_pack.md
+data/jobs/&lt;job_id&gt;/trace/stdout.log
+data/jobs/&lt;job_id&gt;/artifacts/report.md
+data/jobs/&lt;job_id&gt;/artifacts/result.json</code></pre>
+            <div class="desc">要接真实 open_claude，把项目根目录 `.env` 改成：</div>
+            <pre><code>OPEN_CLAUDE_FAKE=0
+OPENAI_BASE_URL=http://your-gateway/v1
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=your-model</code></pre>
+            <div class="preview-tip"><strong>边界：</strong>V1 是单进程轻量版，只适合本地/可信内网。真实 open_claude 具备文件和命令执行能力，不要公网裸露。</div>
           </details>
           <pre id="exports">等待生成...</pre>
         </div>
@@ -4005,6 +4065,47 @@ async function downloadScaffold() {
   a.click();
   URL.revokeObjectURL(a.href);
   setStatus('脚手架 zip 已生成', 'ok');
+}
+async function downloadDelegatedAgent() {
+  if (!sessionId) return;
+  const fallback = (protocol.project_name || 'delegated-agent').toString().trim() || 'delegated-agent';
+  const projectName = prompt('请输入 Delegated Agent 项目目录名', fallback);
+  if (projectName === null) return;
+  const agentName = prompt('请输入 Agent 名称', (protocol.project_name || projectName || fallback).toString());
+  if (agentName === null) return;
+  const agentGoal = prompt('请输入 Agent 目标', (protocol.domain_summary || '接收用户任务，委托内置 open_claude 执行，并返回过程与产物。').toString());
+  if (agentGoal === null) return;
+  const defaultTask = prompt('请输入默认任务说明', '请根据用户输入完成任务，并把最终结果写入 artifacts/report.md 和 artifacts/result.json。');
+  if (defaultTask === null) return;
+  const openClaudeSource = prompt('open_claude 模板路径', '/home/data/rag/open_claude/Openclaude-openclaude');
+  if (openClaudeSource === null) return;
+  setStatus('正在生成独立 Delegated Agent zip...', 'warn');
+  const res = await fetch(`/api/delegated-agent/${sessionId}.zip`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      project_name: projectName || fallback,
+      agent_name: agentName || projectName || fallback,
+      agent_goal: agentGoal || '',
+      default_task: defaultTask || '',
+      bundle_open_claude: true,
+      open_claude_source: openClaudeSource || '/home/data/rag/open_claude/Openclaude-openclaude',
+      deployment: 'local_and_docker'
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    setStatus('Delegated Agent 生成失败', 'warn');
+    alert(text || 'Delegated Agent 生成失败');
+    return;
+  }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(projectName || fallback).trim() || 'delegated-agent'}-delegated-agent.zip`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setStatus('Delegated Agent zip 已生成', 'ok');
 }
 function openPreview() {
   document.getElementById('previewMask').classList.add('open');
