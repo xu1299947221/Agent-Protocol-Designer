@@ -687,13 +687,56 @@ async def api_delegated_playground_job(request):
         logs = snapshot.get("logs") or {"stdout": "", "stderr": ""}
         thinking = build_delegated_thinking(job, event_items, logs)
         agent_reply = build_delegated_agent_reply(event_items, logs, report, job)
-        return JSONResponse({"job": job, "events": event_items, "artifacts": artifacts, "report": report, "logs": logs, "thinking": thinking, "agent_reply": agent_reply})
+        whitebox = build_delegated_whitebox(job, event_items, artifacts, report, logs, thinking, agent_reply)
+        diagnosis = build_delegated_diagnosis(whitebox)
+        repair_task = build_delegated_repair_task(whitebox, diagnosis)
+        return JSONResponse({"job": job, "events": event_items, "artifacts": artifacts, "report": report, "logs": logs, "thinking": thinking, "agent_reply": agent_reply, "whitebox": whitebox, "diagnosis": diagnosis, "repair_task": repair_task})
     except KeyError:
         return JSONResponse({"error": "delegated playground not found"}, status_code=404)
     except FileNotFoundError:
         return JSONResponse({"error": "job not found"}, status_code=404)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+async def api_delegated_playground_llm_diagnose(request):
+    delegated_id = request.path_params.get("delegated_id") or ""
+    payload = await request.json()
+    job_id = str(payload.get("job_id") or "")
+    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    if not job_id:
+        return JSONResponse({"ok": False, "diagnosis": "缺少 job_id，无法诊断。", "error": "job_id required"}, status_code=200)
+    try:
+        snapshot = DELEGATED_PLAYGROUND.get_job_snapshot(delegated_id, job_id)
+        job = snapshot.get("job") or {}
+        events = snapshot.get("events") or []
+        artifacts = snapshot.get("artifacts") or []
+        report = str(snapshot.get("report") or "")
+        logs = snapshot.get("logs") or {"stdout": "", "stderr": ""}
+        thinking = build_delegated_thinking(job, events, logs)
+        agent_reply = build_delegated_agent_reply(events, logs, report, job)
+        whitebox = build_delegated_whitebox(job, events, artifacts, report, logs, thinking, agent_reply)
+        diagnosis = build_delegated_diagnosis(whitebox)
+        compact = {
+            "delegated_id": delegated_id,
+            "job_id": job_id,
+            "diagnosis": diagnosis,
+            "whitebox": whitebox,
+        }
+        messages = [
+            {"role": "system", "content": "你是资深 Agent 架构诊断专家。请用中文输出。你诊断的是 Delegated Agent：APD 把用户任务打包成 Task Pack，委托 open_claude 执行，再读取 Job、Events、stdout/stderr、Artifacts 和 report.md。请按白盒层级解释问题，指出根因、建议修改文件、复测话术和可直接交给工程 AI 的修复任务。不要泄露密钥。"},
+            {"role": "user", "content": json.dumps({"delegated_whitebox_turn": compact, "output_requirements": ["先给一句话结论", "按 Task Pack / Runner / stdout / 产物 / Agent回复 / 观测性逐层诊断", "说明为什么当前回复是这样", "指出最可能根因", "列出建议修改文件", "给出下一轮测试话术", "给出发给 open_claude/Codex 的修复建议"]}, ensure_ascii=False)[:24000]},
+        ]
+        result = await chat_json_result(messages, settings=settings)
+        return JSONResponse({"ok": True, "diagnosis": result.content, "model": result.get("model"), "usage": result.get("usage"), "finish_reason": result.get("finish_reason")})
+    except KeyError:
+        return JSONResponse({"ok": False, "diagnosis": "Delegated Agent 实例不存在，请重新生成并启动。", "error": "delegated playground not found"}, status_code=200)
+    except FileNotFoundError:
+        return JSONResponse({"ok": False, "diagnosis": "Job 文件不存在，请重新发送一轮任务。", "error": "job not found"}, status_code=200)
+    except LLMError as exc:
+        return JSONResponse({"ok": False, "diagnosis": "当前没有成功调用 LLM 诊断。请在左侧“LLM 诊断配置”填写 api_base、api_key、model 后重试。\n\n离线诊断仍可参考右侧白盒信息。", "error": str(exc)}, status_code=200)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "diagnosis": "LLM 诊断异常，已保留离线白盒信息。", "error": str(exc)}, status_code=200)
 
 
 def build_delegated_thinking(job: dict[str, Any], events: list[dict[str, Any]], logs: dict[str, str]) -> dict[str, Any]:
@@ -748,6 +791,126 @@ def build_delegated_agent_reply(events: list[dict[str, Any]], logs: dict[str, st
     if text.strip():
         return {"text": text.strip(), "source": "stdout.stream-json", "complete": False}
     return {"text": "", "source": "", "complete": False}
+
+
+def build_delegated_whitebox(job: dict[str, Any], events: list[dict[str, Any]], artifacts: list[dict[str, Any]], report: str, logs: dict[str, str], thinking: dict[str, Any], agent_reply: dict[str, Any]) -> dict[str, Any]:
+    runner_events = [event for event in events if str(event.get("type") or "").startswith("runner_")]
+    start_event = next((event for event in runner_events if event.get("type") == "runner_start"), {})
+    done_event = next((event for event in reversed(runner_events) if event.get("type") in {"runner_exit", "runner_failed", "runner_timeout"}), {})
+    stdout = str((logs or {}).get("stdout") or "")
+    stderr = str((logs or {}).get("stderr") or "")
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    return {
+        "job_status": {
+            "job_id": job.get("job_id") or "",
+            "status": job.get("status") or "",
+            "summary": job.get("summary") or result.get("summary") or "",
+            "created_at": job.get("created_at") or "",
+            "updated_at": job.get("updated_at") or "",
+        },
+        "task_pack": {
+            "path": job.get("task_pack_path") or "",
+            "message": job.get("message") or "",
+            "explain": "Task Pack 是 APD 发给 delegated agent 的任务输入，相当于本轮 open_claude 要执行的工程任务说明。",
+        },
+        "runner": {
+            "command": (start_event.get("data") or {}).get("command") or "",
+            "cwd": (start_event.get("data") or {}).get("cwd") or "",
+            "timeout_seconds": (start_event.get("data") or {}).get("timeout_seconds"),
+            "pid": thinking.get("pid"),
+            "done_event": done_event,
+            "runner_event_count": len(runner_events),
+            "explain": "Runner 层负责启动 open_claude。这里能判断是否启动成功、卡在哪个进程、是否超时。",
+        },
+        "llm_and_cli_output": {
+            "thinking": thinking,
+            "stdout_tail": "\n".join(stdout.splitlines()[-80:]),
+            "stderr_tail": "\n".join(stderr.splitlines()[-80:]),
+            "stdout_has_stream_json": any(line.startswith("{") for line in stdout.splitlines()),
+            "explain": "这一层不是 APD 自己编的回复，而是 open_claude 的 stdout/stderr 和流式输出证据。",
+        },
+        "agent_reply": {
+            **agent_reply,
+            "report_size": len(report.encode("utf-8")),
+            "explain": "最终用户看到的 Agent 回复优先来自 report.md，其次来自 result.summary 或 stdout 中解析出的 assistant/result。",
+        },
+        "artifacts": {
+            "count": len(artifacts),
+            "items": artifacts,
+            "has_report_md": any(item.get("name") == "report.md" for item in artifacts),
+            "has_result_json": any(item.get("name") == "result.json" for item in artifacts),
+            "explain": "产物层用于判断 open_claude 是否真的按约定写入 report.md、result.json 等交付物。",
+        },
+        "events": {
+            "count": len(events),
+            "tail": events[-40:],
+            "types": sorted({str(event.get("type") or "") for event in events}),
+            "explain": "Events 是过程追踪。它能证明 Job 从 queued、running 到 completed/failed 的状态变化。",
+        },
+    }
+
+
+def build_delegated_diagnosis(whitebox: dict[str, Any]) -> dict[str, Any]:
+    levels: list[dict[str, Any]] = []
+    files: set[str] = {"backend/app/main.py", "backend/app/runner_open_claude.py"}
+    status = ((whitebox.get("job_status") or {}).get("status") or "").lower()
+    runner = whitebox.get("runner") or {}
+    cli = whitebox.get("llm_and_cli_output") or {}
+    reply = whitebox.get("agent_reply") or {}
+    artifacts = whitebox.get("artifacts") or {}
+    if status in {"queued", ""}:
+        levels.append({"label": "Job 调度", "key": "job", "file": "backend/app/main.py", "reason": "Job 还停留在 queued 或没有状态，说明执行循环可能没有启动。", "action": "检查 /api/jobs 创建后是否启动后台任务，以及事件是否写入。", "confidence": 0.9})
+    if status in {"failed", "timeout"}:
+        levels.append({"label": "Runner 执行", "key": "runner", "file": "backend/app/runner_open_claude.py", "reason": f"Job 已结束但状态是 {status}，优先看 runner 命令、stdout/stderr 和超时设置。", "action": "检查 open_claude 命令、模型配置、网络、超时和工具权限。", "confidence": 0.88})
+    if status == "running" and not str(cli.get("stdout_tail") or "").strip():
+        levels.append({"label": "CLI 输出", "key": "stdout", "file": "backend/app/runner_open_claude.py", "reason": "Job 正在运行但 stdout 暂无有效输出，可能在等待模型、首次确认或命令参数不适合非交互模式。", "action": "确认使用 print/stream-json 模式，并检查 stderr、模型网关和超时。", "confidence": 0.82})
+    if not str((reply.get("text") or "")).strip():
+        levels.append({"label": "Agent 回复", "key": "reply", "file": "backend/app/main.py", "reason": "没有解析到最终 Agent 回复，用户侧只能看到状态或空结果。", "action": "检查 report.md/result.json 写入，以及 stdout 中 assistant/result 的解析逻辑。", "confidence": 0.84})
+    if status == "completed" and not artifacts.get("has_report_md"):
+        levels.append({"label": "产物协议", "key": "artifact", "file": "backend/app/task_pack.py", "reason": "Job 完成但没有 report.md，说明 Task Pack 对交付物约束不够强，或 runner 没按协议写文件。", "action": "强化 Task Pack 的交付要求，并在完成前校验 report.md/result.json。", "confidence": 0.78})
+        files.add("backend/app/task_pack.py")
+    if not levels:
+        levels.append({"label": "整体链路", "key": "ok", "file": "backend/app/main.py", "reason": "Job、Runner、回复和产物链路都有可见证据。若业务效果仍不对，优先看 Task Pack 是否准确表达用户需求。", "action": "用同类话术继续回归，并保存失败样本。", "confidence": 0.72})
+    primary = levels[0]
+    files.add(str(primary.get("file") or "backend/app/main.py"))
+    return {
+        "summary": f"本轮优先看：{primary.get('label')}，建议检查 {primary.get('file')}",
+        "primary_level": primary,
+        "levels": levels,
+        "suggested_files": sorted(files),
+        "next_test_messages": ["用同一句话重试，观察 Job 是否从 queued 进入 running/completed。", "要求 Agent 明确写入 artifacts/report.md 和 artifacts/result.json。"],
+    }
+
+
+def build_delegated_repair_task(whitebox: dict[str, Any], diagnosis: dict[str, Any]) -> str:
+    job = whitebox.get("job_status") or {}
+    task = whitebox.get("task_pack") or {}
+    reply = whitebox.get("agent_reply") or {}
+    return f"""请修复 Delegated Agent 调试中暴露的问题。
+
+【用户任务】
+{task.get('message') or ''}
+
+【当前 Job】
+- job_id: {job.get('job_id') or ''}
+- status: {job.get('status') or ''}
+- summary: {job.get('summary') or ''}
+
+【Agent 当前回复】
+{reply.get('text') or '暂无有效回复'}
+
+【APD 诊断】
+{diagnosis.get('summary') or ''}
+
+【建议修改文件】
+{', '.join(diagnosis.get('suggested_files') or [])}
+
+【请你做】
+1. 先阅读上述建议文件和当前 Job 的 trace/stdout/stderr。
+2. 只做与本轮问题相关的最小修改。
+3. 如果是 queued/running 卡住，优先修 Job 调度或 runner。
+4. 如果回复不对，优先修 Task Pack、产物校验或 stdout/report 解析。
+5. 修改后说明如何复测。"""
 
 
 def extract_reply_from_stdout(stdout: str) -> str:
@@ -1797,6 +1960,7 @@ routes = [
     Route("/api/delegated-playground/{delegated_id}/chat", api_delegated_playground_chat, methods=["POST"]),
     Route("/api/delegated-playground/{delegated_id}/config", api_delegated_playground_config),
     Route("/api/delegated-playground/{delegated_id}/job/{job_id}", api_delegated_playground_job),
+    Route("/api/delegated-playground/{delegated_id}/job/{job_id}/llm-diagnose", api_delegated_playground_llm_diagnose, methods=["POST"]),
     Route("/api/demo-playground/start", api_demo_playground_start, methods=["POST"]),
     Route("/api/demo-playground/one-click", api_demo_playground_one_click, methods=["POST"]),
     Route("/api/demo-playground/list", api_demo_playground_list),
@@ -2053,6 +2217,14 @@ DELEGATED_INSPECTOR_HTML = r"""
       <div class="field"><label>Agent 目标</label><textarea id="agentGoal" placeholder="留空自动使用当前协议摘要"></textarea></div>
       <div class="field"><label>默认任务说明</label><textarea id="defaultTask">请根据用户输入完成任务，并把最终结果写入 artifacts/report.md 和 artifacts/result.json。</textarea></div>
       <div class="field"><label>open_claude 路径</label><input id="openClaudeSource" value="/home/data/rag/open_claude/Openclaude-openclaude" /></div>
+      <details>
+        <summary>LLM 诊断配置</summary>
+        <div class="small" style="margin:8px 0">这里用于“LLM 诊断本轮”，不影响 open_claude 自己使用的模型配置。</div>
+        <div class="field"><label>API Base</label><input id="diagApiBase" placeholder="例如：http://192.168.1.156:18888/v1" /></div>
+        <div class="field"><label>API Key</label><input id="diagApiKey" type="password" placeholder="sk-..." /></div>
+        <div class="field"><label>Model</label><input id="diagModel" placeholder="例如：gpt-5.5" /></div>
+        <div class="quick-row"><button onclick="saveDiagSettings()">保存诊断配置</button><button onclick="loadDiagSettings()">读取配置</button></div>
+      </details>
       <div class="quick-row"><button onclick="startRuntime()" class="primary">生成并启动</button><button onclick="refreshRuntimes()">刷新列表</button></div>
       <div id="runtimeList" class="card"><div class="small">暂无运行实例。</div></div>
       <details><summary>真实 open_claude 模式需要什么</summary><div class="small" style="margin-top:8px">生成工程会读取 APD 服务进程环境里的模型配置。真实模式依赖 Node、open_claude 的 dist/cli.js、模型网关、Key、模型名，并可能遇到首次信任目录确认。第一阶段主要先验证闭环。</div></details>
@@ -2078,10 +2250,15 @@ let currentDelegatedId = localStorage.getItem('apd_delegated_id') || '';
 let currentJobId = '';
 let pollTimer = null;
 let turns = [];
+let currentJobSnapshot = null;
+let currentLlmDiagnosisText = '';
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function status(msg){document.getElementById('pageStatus').textContent=msg||'';}
 function md(text){let html=esc(text||'');html=html.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\n/g,'<br/>');return html;}
 function safeJson(value){try{return JSON.stringify(value,null,2)}catch(e){return String(value)}}
+function loadDiagSettings(){diagApiBase.value=localStorage.getItem('apd_api_base')||'';diagApiKey.value=localStorage.getItem('apd_api_key')||'';diagModel.value=localStorage.getItem('apd_model')||'';}
+function saveDiagSettings(){localStorage.setItem('apd_api_base',(diagApiBase.value||'').trim());if((diagApiKey.value||'').trim())localStorage.setItem('apd_api_key',diagApiKey.value.trim());localStorage.setItem('apd_model',(diagModel.value||'').trim());status('LLM 诊断配置已保存');}
+function llmSettings(){return {api_base:localStorage.getItem('apd_api_base')||'',api_key:localStorage.getItem('apd_api_key')||'',model:localStorage.getItem('apd_model')||''};}
 function renderRuntimeCard(item){return `<div class="card"><h4>${esc(item.project_name||item.delegated_id)} <span class="chip ${item.status==='running'?'ok':'warn'}">${esc(item.status||'-')}</span></h4><div class="small">ID：${esc(item.delegated_id||'')}<br/>端口：${esc(String(item.port||'-'))} · PID：${esc(String(item.pid||'-'))}<br/>内部地址：${esc(item.base_url||'')}</div><div class="quick-row" style="margin-top:8px"><button onclick="selectRuntime('${esc(item.delegated_id||'')}')">选择</button><button onclick="stopRuntime('${esc(item.delegated_id||'')}')">停止</button></div></div>`}
 async function refreshRuntimes(){try{const res=await fetch('/api/delegated-playground/list');const data=await res.json();const items=data.items||[];if(!currentDelegatedId&&items[0])selectRuntime(items[0].delegated_id,false);runtimeList.innerHTML=items.length?items.map(renderRuntimeCard).join(''):'<div class="small">暂无运行实例。点击“生成并启动”。</div>';}catch(e){runtimeList.innerHTML='<div class="small">加载失败：'+esc(e.message||e)+'</div>';}}
 function selectRuntime(id,notify=true){currentDelegatedId=id;localStorage.setItem('apd_delegated_id',id);if(notify)status('已选择运行实例：'+id);document.getElementById('sessionInfo').textContent='运行实例：'+id;loadRuntimeConfig();}
@@ -2091,17 +2268,27 @@ async function loadRuntimeConfig(){if(!currentDelegatedId)return;try{const res=a
 function renderConfig(data){const r=data.runtime||{};return `<div class="card"><h3>运行前检查</h3><div class="chips"><span class="chip ${r.fake_runner?'ok':'warn'}">${r.fake_runner?'fake runner':'真实 runner'}</span><span class="chip ${r.node_available?'ok':'bad'}">Node ${r.node_available?'可用':'不可用'}</span><span class="chip ${r.open_claude_cli_exists?'ok':'bad'}">CLI ${r.open_claude_cli_exists?'存在':'不存在'}</span><span class="chip ${r.model_configured?'ok':'warn'}">模型 ${r.model_configured?'已配置':'未配置'}</span></div><div class="small">Agent：${esc(data.agent_name||'')}<br/>目标：${esc(data.agent_goal||'')}</div></div>${section('完整配置','这里来自生成工程的 /api/config。',data)}`;}
 function fillHello(){message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';}
 async function sendMessage(){if(!currentDelegatedId){status('请先生成并启动');return;}const text=message.value.trim();if(!text){message.focus();return;}message.value='';turns.push({role:'user',text});turns.push({role:'agent',text:'Agent 思考中... 正在创建 Job 并执行 Runner',pending:true});renderChat();diagBody.innerHTML='<div class="card"><h3>任务已发送</h3><div class="thinking">等待 Job 创建...</div></div>';try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});const data=await res.json();if(!res.ok)throw new Error(data.error||'发送失败');currentJobId=data.job_id;turns[turns.length-1]={role:'agent',text:`任务已创建：${currentJobId}\\n状态：${data.status||'-'}`,pending:true};renderChat();startPolling();status('Job 已创建：'+currentJobId);}catch(e){turns[turns.length-1]={role:'agent',text:'发送失败：'+(e.message||e),pending:false,error:true};renderChat();diagBody.innerHTML='<div class="card"><h3>发送失败</h3><pre>'+esc(e.message||e)+'</pre></div>';status('发送失败');}}
-function renderChat(){chatList.innerHTML=turns.length?turns.map(t=>`<div class="msg ${t.role==='user'?'user':'agent'}"><div class="meta">${t.role==='user'?'你':'Agent'}${t.pending?' · 运行中':''}</div><div class="bubble ${t.pending?'thinking':''}">${esc(t.text)}</div></div>`).join(''):'<div class="empty">启动后直接输入真实任务。</div>';chatList.scrollTop=chatList.scrollHeight;}
+function diagnosisSummary(d){d=d||{};const levels=d.levels||[];const p=d.primary_level||levels[0]||{};const status=p.key==='ok'?'基本正常':(Number(p.confidence||0)>=0.82?'明显需要修':'需要关注');const cls=p.key==='ok'?'ok':(Number(p.confidence||0)>=0.82?'bad':'warn');return {status,cls,layer:p.label||p.key||'未定位',file:p.file||((d.suggested_files||[])[0])||'暂未定位文件',reason:p.reason||d.summary||'需要结合右侧白盒继续判断。',action:p.action||'查看右侧白盒详情，再用同一句话复测。'};}
+function renderDiagCard(t){if(t.pending)return `<div class="card"><h4>本轮状态</h4><div class="thinking">Agent 正在执行：创建 Job → 启动 runner → 读取 stdout/stderr → 收集产物。</div></div>`;const d=t.diagnosis||{};const s=diagnosisSummary(d);return `<div class="card"><h4>本轮诊断摘要</h4><div class="summary-grid"><div class="summary-row"><b>是否正常</b><span class="summary-status ${s.cls}">${esc(s.status)}</span></div><div class="summary-row"><b>最可能问题</b><span>${esc(s.layer)} · 建议看 ${esc(s.file)}</span></div><div class="summary-row"><b>原因</b><span>${esc(s.reason)}</span></div><div class="summary-row"><b>下一步</b><span>${esc(s.action)}</span></div></div><div class="chips">${(d.levels||[]).map(x=>`<span class="chip ${x.key==='ok'?'ok':(Number(x.confidence||0)>0.8?'bad':'warn')}">${esc(x.label||x.key)} · ${esc(String(Math.round(Number(x.confidence||0)*100)))}%</span>`).join('')}</div><div class="quick-row"><button class="primary" onclick="showCurrentWhitebox()">查看白盒详情</button><button onclick="runDelegatedLlmDiagnosis()">LLM 诊断本轮</button><button onclick="copyRepairTask()">复制修复任务</button></div></div>`;}
+function renderChat(){chatList.innerHTML=turns.length?turns.map(t=>`<div class="msg ${t.role==='user'?'user':'agent'}"><div class="meta">${t.role==='user'?'你':'Agent'}${t.pending?' · 运行中':''}</div><div class="bubble ${t.pending?'thinking':'md-body'}">${t.role==='agent'&&!t.pending?md(t.text):esc(t.text)}</div>${t.role==='agent'?renderDiagCard(t):''}</div>`).join(''):'<div class="empty">启动后直接输入真实任务。</div>';chatList.scrollTop=chatList.scrollHeight;}
 function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(pollJob,1300);pollJob();}
 function latestRunnerThinking(data){const thinking=data.thinking||{};if((thinking.text||'').trim())return String(thinking.text).trim();const events=data.events||[];const outputs=events.filter(e=>e.type==='runner_screen'||e.type==='runner_output');const lastOutput=outputs.slice(-1)[0];if(lastOutput){return ((lastOutput.data||{}).text||lastOutput.message||'').trim();}const logs=(data.logs||{}).stdout||'';if(logs.trim()){return logs.trim().split('\n').slice(-18).join('\n');}const lastEvent=events.slice(-1)[0]||{};return lastEvent.message||lastEvent.type||'等待 open_claude 输出';}
 function currentAgentReply(data){const reply=data.agent_reply||{};return String(reply.text||'').trim();}
 function formatThinkingBlock(data){const thinking=data.thinking||{};const meta=[];if(thinking.pid)meta.push('PID：'+thinking.pid);if(thinking.source)meta.push('来源：'+thinking.source);if(thinking.silence_seconds!==undefined&&thinking.silence_seconds!==null)meta.push('静默：'+thinking.silence_seconds+' 秒');const text=latestRunnerThinking(data)||'等待输出...';return `【${thinking.title||'open_claude 深度思考 / CLI 屏幕'}】\n${meta.length?meta.join(' · ')+'\n':''}${text}\n\n说明：${thinking.explain||'这里展示 runner 当前可见输出。'}`;}
-async function pollJob(){if(!currentDelegatedId||!currentJobId)return;try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/job/${encodeURIComponent(currentJobId)}`);const data=await res.json();if(!res.ok)throw new Error(data.error||'读取 Job 失败');diagBody.innerHTML=renderJob(data);const job=data.job||{};const st=(job.status||'').toLowerCase();if(turns.length&&turns[turns.length-1].role==='agent'&&!['completed','failed','timeout'].includes(st)){const reply=currentAgentReply(data);const replyBlock=reply?`【Agent 正在回复】\n${reply}\n\n`:'';turns[turns.length-1]={role:'agent',text:`${replyBlock}Job：${job.job_id||currentJobId}\n状态：${job.status||'-'}\n摘要：${job.summary||''}\n\n${formatThinkingBlock(data)}`,pending:true};renderChat();status('Job '+(job.status||'-')+'：'+(job.summary||''));}if(['completed','failed','timeout'].includes(st)){clearInterval(pollTimer);pollTimer=null;const report=currentAgentReply(data)||data.report||((job.result||{}).summary)||latestRunnerThinking(data)||st;turns[turns.length-1]={role:'agent',text:report,pending:false,error:st!=='completed'};renderChat();status('Job 结束：'+st);}}catch(e){diagBody.innerHTML='<div class="card"><h3>读取 Job 失败</h3><pre>'+esc(e.message||e)+'</pre></div>';}}
+async function pollJob(){if(!currentDelegatedId||!currentJobId)return;try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/job/${encodeURIComponent(currentJobId)}`);const data=await res.json();if(!res.ok)throw new Error(data.error||'读取 Job 失败');currentJobSnapshot=data;diagBody.innerHTML=renderJob(data);const job=data.job||{};const st=(job.status||'').toLowerCase();if(turns.length&&turns[turns.length-1].role==='agent'&&!['completed','failed','timeout'].includes(st)){const reply=currentAgentReply(data);const replyBlock=reply?`【Agent 正在回复】\n${reply}\n\n`:'';turns[turns.length-1]={role:'agent',text:`${replyBlock}Job：${job.job_id||currentJobId}\n状态：${job.status||'-'}\n摘要：${job.summary||''}\n\n${formatThinkingBlock(data)}`,pending:true,diagnosis:data.diagnosis||{},snapshot:data};renderChat();status('Job '+(job.status||'-')+'：'+(job.summary||''));}if(['completed','failed','timeout'].includes(st)){clearInterval(pollTimer);pollTimer=null;const report=currentAgentReply(data)||data.report||((job.result||{}).summary)||latestRunnerThinking(data)||st;turns[turns.length-1]={role:'agent',text:report,pending:false,error:st!=='completed',diagnosis:data.diagnosis||{},repair_task:data.repair_task||'',snapshot:data};renderChat();status('Job 结束：'+st);}}catch(e){diagBody.innerHTML='<div class="card"><h3>读取 Job 失败</h3><pre>'+esc(e.message||e)+'</pre></div>';}}
 function eventTimeline(events){if(!events.length)return'<div class="small">暂无事件。</div>';return `<div class="summary-grid">${events.map(e=>{const type=e.type||'';const c=type.includes('failed')||type.includes('timeout')?'bad':(type.includes('completed')||type.includes('exit')?'ok':'warn');return `<div class="card"><div class="chips"><span class="chip ${c}">${esc(type)}</span><span class="chip">${esc((e.time||'').replace('T',' ').slice(0,19))}</span></div><div>${esc(e.message||'')}</div>${e.data?`<pre>${esc(safeJson(e.data))}</pre>`:''}</div>`}).join('')}</div>`;}
 function renderOpenClaudeProcess(data){const events=data.events||[],logs=data.logs||{},thinking=data.thinking||{};const runnerEvents=events.filter(e=>String(e.type||'').startsWith('runner_'));const start=runnerEvents.find(e=>e.type==='runner_start')||{};const proc=runnerEvents.find(e=>e.type==='runner_process_started')||{};const outputs=runnerEvents.filter(e=>e.type==='runner_output'||e.type==='runner_screen').slice(-12);const heartbeats=runnerEvents.filter(e=>e.type==='runner_heartbeat').slice(-5);return `<div class="card"><h3>open_claude 执行过程</h3><div class="summary-grid"><div class="summary-row"><b>命令</b><span>${esc(((start.data||{}).command)||'未启动')}</span></div><div class="summary-row"><b>PID</b><span>${esc(String(thinking.pid||(proc.data||{}).pid||'-'))}</span></div><div class="summary-row"><b>工作目录</b><span>${esc(((start.data||{}).cwd)||'-')}</span></div><div class="summary-row"><b>超时</b><span>${esc(String(((start.data||{}).timeout_seconds)||'-'))} 秒</span></div></div><div class="card" style="margin-top:10px"><h4>当前深度思考 / CLI 屏幕</h4><div class="small">${esc(thinking.explain||'展示 open_claude 当前可见输出。')}</div><pre>${esc(latestRunnerThinking(data)||'等待 open_claude 输出...')}</pre></div>${heartbeats.length?`<details open><summary>运行心跳</summary>${eventTimeline(heartbeats)}</details>`:''}${outputs.length?`<details open><summary>最近输出事件</summary>${eventTimeline(outputs)}</details>`:'<div class="help">还没有捕获到 open_claude 输出。如果状态一直 running，可能是在模型请求、首次确认、或 CLI 无输出等待。</div>'}</div><details open><summary>stdout / stderr 原始日志</summary><h4>stdout.log</h4><pre>${esc(logs.stdout||'暂无 stdout 输出')}</pre><h4>stderr.log</h4><pre>${esc(logs.stderr||'暂无 stderr 输出')}</pre></details>`;}
-function renderJob(data){const job=data.job||{},events=data.events||[],arts=data.artifacts||[],result=job.result||{},report=data.report||'',reply=currentAgentReply(data);const cls=job.status==='completed'?'ok':(['failed','timeout'].includes(job.status)?'bad':'warn');const isRunning=job.status==='running';return `<div class="card"><h3>本轮结论</h3><div class="summary-grid"><div class="summary-row"><b>状态</b><span class="summary-status ${cls}">${esc(job.status||'-')}</span></div><div class="summary-row"><b>摘要</b><span>${esc(job.summary||result.summary||'')}</span></div><div class="summary-row"><b>Job</b><span>${esc(job.job_id||'')}</span></div><div class="summary-row"><b>Task Pack</b><span>${esc(job.task_pack_path||'-')}</span></div></div>${isRunning?'<div class="help">当前不是 queued，已经进入 running。若长时间不结束，通常是真实 open_claude 在执行、等待首次确认、模型网关卡住或没有输出。下面会显示 open_claude 命令、PID、心跳和输出。</div>':''}</div><div class="card"><h3>Agent 回复</h3><div class="md-body">${md(reply||report||result.summary||'暂无回复文本，任务还没完成或正在工具调用。')}</div></div>${renderOpenClaudeProcess(data)}<div class="card"><h3>产物</h3><div class="chips">${arts.length?arts.map(a=>`<span class="file">${esc(a.name||'')} · ${esc(String(a.size||0))} bytes</span>`).join(''):'<span class="small">暂无产物</span>'}</div></div><details><summary>全部过程 Events</summary>${eventTimeline(events)}</details><details><summary>完整 Job / Result JSON</summary>${section('Job','生成工程 /api/jobs/{job_id} 返回。',job)}${section('Result','artifacts/result.json 解析结果。',result)}</details>`;}
+function whiteboxLayer(title,desc,payload,open=false){return `<details ${open?'open':''}><summary>${esc(title)}</summary><div class="small" style="margin:8px 0">${esc(desc||'')}</div><pre>${esc(safeJson(payload))}</pre></details>`;}
+function renderWhitebox(data){const wb=data.whitebox||{};return `<div class="card"><h3>白盒过程</h3><div class="small">这一块对应真实 Delegated Agent 链路：Task Pack → Runner/open_claude → stdout/stderr → Artifacts → Agent 回复 → Events。不是只看日志，而是把每层输入输出拆开看。</div></div>${whiteboxLayer('1. Task Pack / 本轮任务输入','APD 交给委托 Agent 的结构化任务包，决定 open_claude 到底要做什么。',wb.task_pack,true)}${whiteboxLayer('2. Runner / open_claude 启动','是否真的启动 open_claude、命令是什么、工作目录在哪、PID 和超时是多少。',wb.runner,true)}${whiteboxLayer('3. LLM 与 CLI 输出','open_claude 的 stdout/stderr、流式输出和当前屏幕，是判断卡住/无回复/模型失败的证据。',wb.llm_and_cli_output,true)}${whiteboxLayer('4. Agent 回复解析','最终给用户看的内容来自哪里：report.md、result.summary，还是 stdout 解析。',wb.agent_reply,true)}${whiteboxLayer('5. Artifacts / 产物协议','检查 report.md/result.json 是否按约定生成。',wb.artifacts,false)}${whiteboxLayer('6. Events / Trace','Job 状态流转和 runner 事件，用来复盘全过程。',wb.events,false)}`;}
+function renderDiagnosisPanel(data){const d=data.diagnosis||{};const s=diagnosisSummary(d);return `<div class="card"><h3>诊断与修复</h3><div class="summary-grid"><div class="summary-row"><b>是否正常</b><span class="summary-status ${s.cls}">${esc(s.status)}</span></div><div class="summary-row"><b>优先看</b><span>${esc(s.layer)} · ${esc(s.file)}</span></div><div class="summary-row"><b>原因</b><span>${esc(s.reason)}</span></div><div class="summary-row"><b>建议</b><span>${esc(s.action)}</span></div></div><div class="chips">${(d.levels||[]).map(x=>`<span class="chip ${x.key==='ok'?'ok':(Number(x.confidence||0)>0.8?'bad':'warn')}">${esc(x.label||x.key)} · ${esc(String(Math.round(Number(x.confidence||0)*100)))}%</span>`).join('')}</div><div class="quick-row"><button class="primary" onclick="runDelegatedLlmDiagnosis()">LLM 诊断本轮</button><button onclick="copyRepairTask()">复制修复任务</button><button onclick="copyWhitebox()">复制白盒 JSON</button></div><div id="llmDiagnosisBox" class="small" style="margin-top:8px;white-space:pre-wrap">点击“LLM 诊断本轮”后，会把当前 Job 的白盒数据发给诊断模型，让它解释为什么这样回复、哪里该改、如何复测。</div></div>`;}
+function renderJob(data){const job=data.job||{},events=data.events||[],arts=data.artifacts||[],result=job.result||{},report=data.report||'',reply=currentAgentReply(data);const cls=job.status==='completed'?'ok':(['failed','timeout'].includes(job.status)?'bad':'warn');const isRunning=job.status==='running';return `<div class="card"><h3>本轮结论</h3><div class="summary-grid"><div class="summary-row"><b>状态</b><span class="summary-status ${cls}">${esc(job.status||'-')}</span></div><div class="summary-row"><b>摘要</b><span>${esc(job.summary||result.summary||'')}</span></div><div class="summary-row"><b>Job</b><span>${esc(job.job_id||'')}</span></div><div class="summary-row"><b>Task Pack</b><span>${esc(job.task_pack_path||'-')}</span></div></div>${isRunning?'<div class="help">当前不是 queued，已经进入 running。若长时间不结束，通常是真实 open_claude 在执行、等待首次确认、模型网关卡住或没有输出。下面会显示 open_claude 命令、PID、心跳和输出。</div>':''}</div>${renderDiagnosisPanel(data)}<div class="card"><h3>Agent 回复</h3><div class="md-body">${md(reply||report||result.summary||'暂无回复文本，任务还没完成或正在工具调用。')}</div></div>${renderWhitebox(data)}${renderOpenClaudeProcess(data)}<div class="card"><h3>产物</h3><div class="chips">${arts.length?arts.map(a=>`<span class="file">${esc(a.name||'')} · ${esc(String(a.size||0))} bytes</span>`).join(''):'<span class="small">暂无产物</span>'}</div></div><details><summary>完整 Job / Result JSON</summary>${section('Job','生成工程 /api/jobs/{job_id} 返回。',job)}${section('Result','artifacts/result.json 解析结果。',result)}</details>`;}
+function showCurrentWhitebox(){if(!currentJobSnapshot){status('还没有 Job 白盒数据');return;}diagBody.innerHTML=renderJob(currentJobSnapshot);status('已显示当前 Job 白盒详情');}
+function copyText(text){navigator.clipboard?.writeText(String(text||''));}
+function copyWhitebox(){if(!currentJobSnapshot){status('没有白盒数据可复制');return;}copyText(safeJson(currentJobSnapshot.whitebox||{}));status('已复制白盒 JSON');}
+function copyRepairTask(){if(!currentJobSnapshot){status('没有修复任务可复制');return;}copyText(currentJobSnapshot.repair_task||'');status('已复制修复任务，可发给 Agent IDE 里的 open_claude');}
+async function runDelegatedLlmDiagnosis(){if(!currentDelegatedId||!currentJobId){status('没有当前 Job，无法诊断');return;}const box=document.getElementById('llmDiagnosisBox');if(box)box.textContent='LLM 正在读取当前 Job 白盒数据并诊断...';try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/job/${encodeURIComponent(currentJobId)}/llm-diagnose`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:currentJobId,settings:llmSettings()})});const data=await res.json();currentLlmDiagnosisText=String(data.diagnosis||'无诊断内容')+(data.error?'\n\n失败原因：'+data.error:'');if(box)box.innerHTML=`<div class="md-body">${md(currentLlmDiagnosisText)}</div><div class="quick-row" style="margin-top:8px"><button onclick="copyText(currentLlmDiagnosisText)">复制诊断原文</button><button class="primary" onclick="copyRepairTask()">复制修复任务</button></div>`;status(data.ok?'LLM 诊断完成':'LLM 诊断未成功，已显示离线说明');}catch(e){if(box)box.textContent='LLM 诊断请求失败：'+(e.message||e);status('LLM 诊断请求失败');}}
 function section(title,desc,data){return `<div class="card"><h3>${esc(title)}</h3><div class="small">${esc(desc||'')}</div><pre>${esc(safeJson(data))}</pre></div>`;}
-(async function init(){projectName.value=localStorage.getItem('apd_delegated_project_name')||'delegated-agent-demo';agentGoal.value=localStorage.getItem('apd_delegated_agent_goal')||'';defaultTask.value=localStorage.getItem('apd_delegated_default_task')||defaultTask.value;openClaudeSource.value=localStorage.getItem('apd_delegated_open_claude')||openClaudeSource.value;message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';if(!sessionId)status('没有 session_id：请从 APD 主页面“导出产物”打开本页');else status('已绑定 APD 会话：'+sessionId);await refreshRuntimes();if(currentDelegatedId)loadRuntimeConfig();})();
+(async function init(){projectName.value=localStorage.getItem('apd_delegated_project_name')||'delegated-agent-demo';agentGoal.value=localStorage.getItem('apd_delegated_agent_goal')||'';defaultTask.value=localStorage.getItem('apd_delegated_default_task')||defaultTask.value;openClaudeSource.value=localStorage.getItem('apd_delegated_open_claude')||openClaudeSource.value;loadDiagSettings();message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';if(!sessionId)status('没有 session_id：请从 APD 主页面“导出产物”打开本页');else status('已绑定 APD 会话：'+sessionId);await refreshRuntimes();if(currentDelegatedId)loadRuntimeConfig();})();
 </script>
 </body>
 </html>
