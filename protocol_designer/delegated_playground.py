@@ -180,6 +180,12 @@ class DelegatedPlaygroundManager:
         item = self.get(delegated_id)
         return _get_json(f"{item.base_url}/api/jobs/{job_id}/artifacts", timeout=12)
 
+    def job_logs(self, delegated_id: str, job_id: str) -> dict[str, str]:
+        item = self.get(delegated_id)
+        stdout = _get_text(f"{item.base_url}/api/jobs/{job_id}/logs/stdout", timeout=12)
+        stderr = _get_text(f"{item.base_url}/api/jobs/{job_id}/logs/stderr", timeout=12)
+        return {"stdout": stdout, "stderr": stderr}
+
     def artifact_text(self, delegated_id: str, job_id: str, name: str) -> str:
         item = self.get(delegated_id)
         return _get_text(f"{item.base_url}/api/jobs/{job_id}/artifacts/{name}", timeout=12)
