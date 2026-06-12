@@ -909,6 +909,19 @@ def _task_pack_template() -> str:
   "next_actions": []
 }
 ```
+
+## 实时信息 / 联网检索规则
+
+当用户询问天气、价格、新闻、政策、比赛、实时状态等会变化的信息时：
+
+1. 必须主动尝试获取实时或近实时数据，不能只回答“无法获取”。
+2. 优先使用可直接访问、可引用的数据源；天气类问题可优先尝试：
+   - `https://wttr.in/<城市>?format=j1`
+   - 权威天气站点或搜索结果中的可访问页面
+3. 如果搜索工具没有返回结果，应继续尝试直接 `WebFetch` 公开数据 URL。
+4. 只有在多个数据源都失败后，才说明无法获取，并把失败原因写入报告。
+5. 输出必须包含：查询地点、查询日期、关键数值、简短建议、数据来源。
+6. 不要编造数据；但也不要在没有尝试直接数据源前过早放弃。
 """
 
 
@@ -1344,6 +1357,8 @@ def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
         "--verbose",
         "--include-partial-messages",
         "--dangerously-skip-permissions",
+        "--tools",
+        "Read,Write,Edit,Bash,WebFetch,WebSearch,TodoWrite",
         "--add-dir",
         str(root),
     ]
