@@ -3,6 +3,7 @@ import zipfile
 from pathlib import Path
 
 from protocol_designer.delegated_generator import generate_delegated_agent_project
+from protocol_designer.delegated_playground import DelegatedPlaygroundManager
 
 
 def create_fake_open_claude(root: Path) -> Path:
@@ -90,3 +91,36 @@ def test_generated_backend_fake_runner_runs_end_to_end(tmp_path, monkeypatch):
     assert detail["result"]["summary"] == "fake runner completed"
     assert (artifacts / "report.md").exists()
     assert (artifacts / "result.json").exists()
+
+
+def test_delegated_playground_starts_and_runs_fake_job(tmp_path):
+    source = create_fake_open_claude(tmp_path)
+    manager = DelegatedPlaygroundManager(tmp_path / "playground")
+    session = {
+        "session_id": "session-abc",
+        "title": "Delegated Online",
+        "protocol": {"project_name": "delegated-online", "domain_summary": "online debug"},
+    }
+
+    item = manager.start(
+        session,
+        project_name="delegated-online",
+        open_claude_source=source,
+        fake_runner=True,
+    )
+    try:
+        created = manager.create_job(item["delegated_id"], "请生成 report.md 和 result.json")
+        detail = {}
+        for _ in range(50):
+            detail = manager.get_job(item["delegated_id"], created["job_id"])
+            if detail["status"] in {"completed", "failed", "timeout"}:
+                break
+        artifacts = manager.artifacts(item["delegated_id"], created["job_id"])
+        report = manager.artifact_text(item["delegated_id"], created["job_id"], "report.md")
+    finally:
+        manager.stop(item["delegated_id"])
+
+    assert detail["status"] == "completed"
+    assert detail["summary"] == "fake runner completed"
+    assert any(item["name"] == "report.md" for item in artifacts["artifacts"])
+    assert "Fake Runner" in report

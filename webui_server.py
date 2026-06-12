@@ -22,6 +22,7 @@ from starlette.staticfiles import StaticFiles
 
 from protocol_designer.core import EMPTY_PROTOCOL, build_exports, design_step, fallback_step, merge_protocol
 from protocol_designer.delegated_generator import DEFAULT_OPEN_CLAUDE_SOURCE, generate_delegated_agent_project
+from protocol_designer.delegated_playground import DelegatedPlaygroundManager
 from protocol_designer.demo_playground import DemoPlaygroundManager
 from protocol_designer.dev_studio import DevStudioManager
 from protocol_designer.generator import generate_project_scaffold, safe_project_name
@@ -65,6 +66,9 @@ AUDIT_DIR.mkdir(parents=True, exist_ok=True)
 DEMO_PLAYGROUND_DIR = BASE_DIR / "data" / "demo_playground"
 DEMO_PLAYGROUND_DIR.mkdir(parents=True, exist_ok=True)
 DEMO_PLAYGROUND = DemoPlaygroundManager(DEMO_PLAYGROUND_DIR)
+DELEGATED_PLAYGROUND_DIR = BASE_DIR / "data" / "delegated_playground"
+DELEGATED_PLAYGROUND_DIR.mkdir(parents=True, exist_ok=True)
+DELEGATED_PLAYGROUND = DelegatedPlaygroundManager(DELEGATED_PLAYGROUND_DIR)
 DEV_STUDIO_DIR = BASE_DIR / "data" / "dev_workspaces"
 DEV_STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 DEV_STUDIO = DevStudioManager(DEV_STUDIO_DIR)
@@ -616,6 +620,86 @@ async def api_delegated_agent_zip(request):
         "X-APD-Delegated-Manifest": json.dumps({"project_name": manifest.get("project_name"), "bundled": manifest.get("bundle_open_claude")}, ensure_ascii=False),
     }
     return Response(data, media_type="application/zip", headers=headers)
+
+
+async def api_delegated_playground_start(request):
+    payload = await request.json()
+    session = get_session(payload.get("session_id") or payload.get("session"))
+    protocol = session.get("protocol") or {}
+    try:
+        result = DELEGATED_PLAYGROUND.start(
+            session,
+            project_name=str(payload.get("project_name") or ""),
+            agent_name=str(payload.get("agent_name") or protocol.get("project_name") or session.get("title") or ""),
+            agent_goal=str(payload.get("agent_goal") or protocol.get("domain_summary") or ""),
+            default_task=str(payload.get("default_task") or ""),
+            open_claude_source=str(payload.get("open_claude_source") or DEFAULT_OPEN_CLAUDE_SOURCE),
+            fake_runner=bool(payload.get("fake_runner", True)),
+        )
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    audit("delegated_playground_start", "delegated_playground", result.get("delegated_id") or "", {"session_id": session.get("session_id"), "port": result.get("port")})
+    return JSONResponse(result)
+
+
+async def api_delegated_playground_list(request):
+    return JSONResponse({"items": DELEGATED_PLAYGROUND.list_items()})
+
+
+async def api_delegated_playground_stop(request):
+    delegated_id = request.path_params.get("delegated_id") or ""
+    try:
+        result = DELEGATED_PLAYGROUND.stop(delegated_id)
+    except KeyError:
+        return JSONResponse({"error": "delegated playground not found"}, status_code=404)
+    audit("delegated_playground_stop", "delegated_playground", delegated_id, {"status": result.get("status")})
+    return JSONResponse(result)
+
+
+async def api_delegated_playground_chat(request):
+    delegated_id = request.path_params.get("delegated_id") or ""
+    payload = await request.json()
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        return JSONResponse({"error": "message required"}, status_code=400)
+    try:
+        created = DELEGATED_PLAYGROUND.create_job(delegated_id, message)
+    except KeyError:
+        return JSONResponse({"error": "delegated playground not found"}, status_code=404)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(created)
+
+
+async def api_delegated_playground_job(request):
+    delegated_id = request.path_params.get("delegated_id") or ""
+    job_id = request.path_params.get("job_id") or ""
+    try:
+        job = DELEGATED_PLAYGROUND.get_job(delegated_id, job_id)
+        events = DELEGATED_PLAYGROUND.events(delegated_id, job_id)
+        artifacts = DELEGATED_PLAYGROUND.artifacts(delegated_id, job_id)
+        report = ""
+        artifact_names = [item.get("name") for item in artifacts.get("artifacts") or [] if isinstance(item, dict)]
+        if "report.md" in artifact_names:
+            try:
+                report = DELEGATED_PLAYGROUND.artifact_text(delegated_id, job_id, "report.md")
+            except Exception:
+                report = ""
+        return JSONResponse({"job": job, "events": events.get("events") or [], "artifacts": artifacts.get("artifacts") or [], "report": report})
+    except KeyError:
+        return JSONResponse({"error": "delegated playground not found"}, status_code=404)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+async def api_delegated_playground_config(request):
+    delegated_id = request.path_params.get("delegated_id") or ""
+    try:
+        return JSONResponse(DELEGATED_PLAYGROUND.config(delegated_id))
+    except KeyError:
+        return JSONResponse({"error": "delegated playground not found"}, status_code=404)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 def build_demo_maturity_report(protocol: dict[str, Any], agent: dict[str, Any], workflow: dict[str, Any], store: dict[str, Any], tools: dict[str, Any]) -> dict[str, Any]:
@@ -1620,6 +1704,12 @@ routes = [
     Route("/api/export/{session_id}/{name}", api_export),
     Route("/api/scaffold/{session_id}.zip", api_scaffold_zip),
     Route("/api/delegated-agent/{session_id}.zip", api_delegated_agent_zip, methods=["POST"]),
+    Route("/api/delegated-playground/start", api_delegated_playground_start, methods=["POST"]),
+    Route("/api/delegated-playground/list", api_delegated_playground_list),
+    Route("/api/delegated-playground/{delegated_id}/stop", api_delegated_playground_stop, methods=["POST"]),
+    Route("/api/delegated-playground/{delegated_id}/chat", api_delegated_playground_chat, methods=["POST"]),
+    Route("/api/delegated-playground/{delegated_id}/config", api_delegated_playground_config),
+    Route("/api/delegated-playground/{delegated_id}/job/{job_id}", api_delegated_playground_job),
     Route("/api/demo-playground/start", api_demo_playground_start, methods=["POST"]),
     Route("/api/demo-playground/one-click", api_demo_playground_one_click, methods=["POST"]),
     Route("/api/demo-playground/list", api_demo_playground_list),
@@ -2289,6 +2379,7 @@ HTML = r"""
             <span class="export-header-actions">
               <button onclick="downloadScaffold()">生成可运行 Demo zip</button>
               <button onclick="downloadDelegatedAgent()" class="primary">生成 Delegated Agent zip</button>
+              <button onclick="openDelegatedPlayground()">在线调试 Delegated</button>
               <button onclick="openDemoPlayground()">在线运行 Demo</button>
               <button onclick="openCliCollabAssistant()">打开 Agent IDE</button>
               <span class="export-actions" id="exportActions">
@@ -2766,6 +2857,68 @@ OPENAI_MODEL=your-model</code></pre>
       </details>
       <div id="demoPlaygroundStatus" class="example-list"></div>
       <div id="demoPlaygroundResult" class="preview-result">点击“一键体验”开始。</div>
+    </div>
+  </aside>
+</div>
+<div class="drawer-mask" id="delegatedPlaygroundMask" onclick="closeDelegatedPlayground(event)">
+  <aside class="drawer wide-drawer" onclick="event.stopPropagation()">
+    <div class="drawer-head">
+      <h2>Delegated Agent 在线调试台</h2>
+      <div>
+        <button onclick="startDelegatedPlayground()" class="primary">生成并启动</button>
+        <button onclick="stopDelegatedPlayground()">停止</button>
+        <button onclick="closeDelegatedPlayground()">关闭</button>
+      </div>
+    </div>
+    <div class="guide-body">
+      <div class="beginner-box">
+        <h3>作用：不用下载 zip，直接在 APD 里跑 Delegated Agent</h3>
+        <p>这里会临时生成一个独立 Delegated Agent 工程，启动 FastAPI 服务，然后你可以像最终用户一样发消息。右侧会显示 Job 状态、Task Pack 过程、产物和 report.md。</p>
+        <p><strong>默认 fake runner：</strong>先验证任务链路，不消耗 LLM；切到真实 runner 后才会启动内置 open_claude。</p>
+      </div>
+      <div class="sandbox-form">
+        <label>项目名
+          <input id="delegatedProjectName" placeholder="例如 delegated-agent-demo；留空自动使用当前项目名" />
+        </label>
+        <label>运行模式
+          <select id="delegatedFakeRunner">
+            <option value="1">fake runner：先验证链路</option>
+            <option value="0">真实 open_claude：调用模型和执行器</option>
+          </select>
+        </label>
+        <label class="sandbox-full">Agent 目标
+          <textarea id="delegatedAgentGoal" placeholder="留空自动使用当前协议摘要"></textarea>
+        </label>
+        <label class="sandbox-full">默认任务说明
+          <textarea id="delegatedDefaultTask" placeholder="请根据用户输入完成任务，并把最终结果写入 artifacts/report.md 和 artifacts/result.json。"></textarea>
+        </label>
+        <label class="sandbox-full">open_claude 路径
+          <input id="delegatedOpenClaudeSource" placeholder="/home/data/rag/open_claude/Openclaude-openclaude" />
+        </label>
+      </div>
+      <div class="sandbox-actions">
+        <button onclick="startDelegatedPlayground()" class="primary">1. 生成并启动</button>
+        <button onclick="refreshDelegatedPlaygroundList()">刷新运行列表</button>
+        <button onclick="loadDelegatedConfig()">运行前检查</button>
+      </div>
+      <div id="delegatedPlaygroundStatus" class="example-list"></div>
+      <div class="runtime-grid" style="grid-template-columns:minmax(320px,420px) 1fr;">
+        <section class="preview-section">
+          <h3>对话测试</h3>
+          <div class="desc">像最终用户一样输入。每次发送都会创建一个 Job，并持续轮询状态。</div>
+          <textarea id="delegatedChatInput" placeholder="例如：请在 artifacts/report.md 写一段 hello delegated agent，并生成 artifacts/result.json。"></textarea>
+          <div class="sandbox-actions">
+            <button onclick="sendDelegatedMessage()" class="primary">发送给 Agent</button>
+            <button onclick="fillDelegatedHello()">填入 hello 验收任务</button>
+          </div>
+          <div id="delegatedChatLog" class="example-list"></div>
+        </section>
+        <section class="preview-section">
+          <h3>运行过程 / 产物</h3>
+          <div class="desc">这里显示 Job 状态、Events、Artifacts 和 report.md。它对应生成工程里的真实 API，而不是 APD 假数据。</div>
+          <div id="delegatedPlaygroundResult" class="preview-result">先点击“生成并启动”。</div>
+        </section>
+      </div>
     </div>
   </aside>
 </div>
@@ -4655,6 +4808,205 @@ async function analyzeMultiAgent() {
   }
 }
 let currentDemoId = '';
+let currentDelegatedId = localStorage.getItem('apd_delegated_id') || '';
+let currentDelegatedJobId = '';
+let delegatedPollTimer = null;
+function openDelegatedPlayground() {
+  document.getElementById('delegatedPlaygroundMask').classList.add('open');
+  if (!delegatedProjectName.value.trim()) delegatedProjectName.value = localStorage.getItem('apd_delegated_project_name') || (protocol.project_name || 'delegated-agent-demo');
+  if (!delegatedAgentGoal.value.trim()) delegatedAgentGoal.value = localStorage.getItem('apd_delegated_agent_goal') || (protocol.domain_summary || '');
+  if (!delegatedDefaultTask.value.trim()) delegatedDefaultTask.value = localStorage.getItem('apd_delegated_default_task') || '请根据用户输入完成任务，并把最终结果写入 artifacts/report.md 和 artifacts/result.json。';
+  if (!delegatedOpenClaudeSource.value.trim()) delegatedOpenClaudeSource.value = localStorage.getItem('apd_delegated_open_claude') || '/home/data/rag/open_claude/Openclaude-openclaude';
+  if (!delegatedChatInput.value.trim()) delegatedChatInput.value = localStorage.getItem('apd_delegated_chat_input') || '请在 artifacts/report.md 写一段 hello delegated agent，并生成 artifacts/result.json。';
+  refreshDelegatedPlaygroundList();
+}
+function closeDelegatedPlayground(event) {
+  if (event && event.target !== document.getElementById('delegatedPlaygroundMask')) return;
+  document.getElementById('delegatedPlaygroundMask').classList.remove('open');
+}
+function renderDelegatedSummary(item) {
+  if (!item || !item.delegated_id) return '<div class="example-card">暂无运行中的 Delegated Agent。</div>';
+  return `<div class="example-card">
+    <strong>${escapeHtml(item.project_name || item.delegated_id)} <span class="pill">${escapeHtml(item.status || '-')}</span></strong>
+    <p>Delegated ID：${escapeHtml(item.delegated_id || '')}；端口：${escapeHtml(String(item.port || '-'))}；PID：${escapeHtml(String(item.pid || '-'))}</p>
+    <p>内部地址：${escapeHtml(item.base_url || '')}</p>
+    <button onclick="selectDelegatedPlayground('${escapeHtml(item.delegated_id || '')}')">选择</button>
+    <button onclick="stopDelegatedPlayground('${escapeHtml(item.delegated_id || '')}')">停止</button>
+  </div>`;
+}
+function selectDelegatedPlayground(delegatedId) {
+  currentDelegatedId = delegatedId;
+  localStorage.setItem('apd_delegated_id', delegatedId);
+  setStatus('已选择 Delegated Agent：' + delegatedId, 'ok');
+  loadDelegatedConfig();
+}
+async function refreshDelegatedPlaygroundList() {
+  try {
+    const res = await fetch('/api/delegated-playground/list');
+    const data = await res.json();
+    const items = data.items || [];
+    if (!currentDelegatedId) currentDelegatedId = localStorage.getItem('apd_delegated_id') || ((items[0] || {}).delegated_id || '');
+    delegatedPlaygroundStatus.innerHTML = items.length ? items.map(renderDelegatedSummary).join('') : '<div class="example-card">暂无运行中的 Delegated Agent，点击“生成并启动”。</div>';
+  } catch (err) {
+    delegatedPlaygroundStatus.innerHTML = '<div class="example-card">加载 Delegated Agent 列表失败：' + escapeHtml(err && err.message ? err.message : err) + '</div>';
+  }
+}
+async function startDelegatedPlayground() {
+  if (!sessionId) return;
+  const projectName = delegatedProjectName.value.trim();
+  const agentGoal = delegatedAgentGoal.value.trim();
+  const defaultTask = delegatedDefaultTask.value.trim();
+  const openClaudeSource = delegatedOpenClaudeSource.value.trim() || '/home/data/rag/open_claude/Openclaude-openclaude';
+  localStorage.setItem('apd_delegated_project_name', projectName);
+  localStorage.setItem('apd_delegated_agent_goal', agentGoal);
+  localStorage.setItem('apd_delegated_default_task', defaultTask);
+  localStorage.setItem('apd_delegated_open_claude', openClaudeSource);
+  delegatedPlaygroundResult.innerHTML = '<section class="beginner-box"><h3>正在生成并启动 Delegated Agent...</h3><p>APD 会生成临时工程、复制 open_claude、启动 FastAPI。首次打包可能需要十几秒。</p></section>';
+  setStatus('正在启动 Delegated Agent 调试台...', 'warn');
+  try {
+    const res = await fetch('/api/delegated-playground/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: sessionId,
+        project_name: projectName,
+        agent_name: protocol.project_name || projectName || 'Delegated Agent',
+        agent_goal: agentGoal,
+        default_task: defaultTask,
+        open_claude_source: openClaudeSource,
+        fake_runner: delegatedFakeRunner.value !== '0'
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '启动失败');
+    currentDelegatedId = data.delegated_id;
+    localStorage.setItem('apd_delegated_id', currentDelegatedId);
+    delegatedPlaygroundResult.innerHTML = previewSection('Delegated Agent 已启动', '现在可以直接在左侧对话框发送任务。默认 fake runner 会很快返回；真实 open_claude 可能需要等待。', data);
+    await refreshDelegatedPlaygroundList();
+    await loadDelegatedConfig();
+    setStatus('Delegated Agent 调试台已启动', 'ok');
+  } catch (err) {
+    delegatedPlaygroundResult.innerHTML = `<section class="diagnostics"><h3>启动失败</h3><p>${escapeHtml(err && err.message ? err.message : err)}</p><p>先检查 open_claude 路径是否存在，以及 dist/cli.js 是否存在。</p></section>`;
+    setStatus('Delegated Agent 调试台启动失败', 'warn');
+  }
+}
+async function stopDelegatedPlayground(delegatedId) {
+  delegatedId = delegatedId || currentDelegatedId;
+  if (!delegatedId) { setStatus('没有可停止的 Delegated Agent', 'warn'); return; }
+  try {
+    const res = await fetch(`/api/delegated-playground/${encodeURIComponent(delegatedId)}/stop`, {method:'POST'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '停止失败');
+    if (currentDelegatedId === delegatedId) {
+      currentDelegatedId = '';
+      localStorage.removeItem('apd_delegated_id');
+    }
+    delegatedPlaygroundResult.innerHTML = previewSection('Delegated Agent 已停止', '临时 FastAPI 进程已停止。', data);
+    await refreshDelegatedPlaygroundList();
+    setStatus('Delegated Agent 已停止', 'ok');
+  } catch (err) {
+    delegatedPlaygroundResult.innerHTML = '停止失败：' + escapeHtml(err && err.message ? err.message : err);
+    setStatus('停止 Delegated Agent 失败', 'warn');
+  }
+}
+async function loadDelegatedConfig() {
+  if (!currentDelegatedId) { setStatus('请先启动或选择 Delegated Agent', 'warn'); return; }
+  try {
+    const res = await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/config`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '读取配置失败');
+    delegatedPlaygroundResult.innerHTML = previewSection('运行前检查', 'fake runner、Node、CLI、模型配置都在这里。', data);
+  } catch (err) {
+    delegatedPlaygroundResult.innerHTML = '运行前检查失败：' + escapeHtml(err && err.message ? err.message : err);
+  }
+}
+function fillDelegatedHello() {
+  delegatedChatInput.value = '请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';
+}
+async function sendDelegatedMessage() {
+  if (!currentDelegatedId) { setStatus('请先生成并启动 Delegated Agent', 'warn'); return; }
+  const messageText = delegatedChatInput.value.trim();
+  if (!messageText) { setStatus('请输入消息', 'warn'); return; }
+  localStorage.setItem('apd_delegated_chat_input', messageText);
+  delegatedChatLog.innerHTML += `<div class="example-card"><strong>你</strong><p>${escapeHtml(messageText)}</p></div>`;
+  delegatedPlaygroundResult.innerHTML = '<section class="beginner-box"><h3>Agent 已收到任务</h3><p>正在创建 Job，随后会轮询状态、过程和产物。</p></section>';
+  try {
+    const res = await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/chat`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message: messageText})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '发送失败');
+    currentDelegatedJobId = data.job_id;
+    delegatedChatLog.innerHTML += `<div class="example-card"><strong>Agent</strong><p>任务已创建：${escapeHtml(currentDelegatedJobId)}，状态：${escapeHtml(data.status || '-')}</p></div>`;
+    startDelegatedPolling();
+    setStatus('Delegated Agent 任务已提交', 'ok');
+  } catch (err) {
+    delegatedPlaygroundResult.innerHTML = `<section class="diagnostics"><h3>发送失败</h3><p>${escapeHtml(err && err.message ? err.message : err)}</p></section>`;
+    setStatus('Delegated Agent 发送失败', 'warn');
+  }
+}
+function startDelegatedPolling() {
+  if (delegatedPollTimer) clearInterval(delegatedPollTimer);
+  delegatedPollTimer = setInterval(pollDelegatedJob, 1300);
+  pollDelegatedJob();
+}
+async function pollDelegatedJob() {
+  if (!currentDelegatedId || !currentDelegatedJobId) return;
+  try {
+    const res = await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/job/${encodeURIComponent(currentDelegatedJobId)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '读取 Job 失败');
+    delegatedPlaygroundResult.innerHTML = renderDelegatedJobResult(data);
+    const status = ((data.job || {}).status || '').toLowerCase();
+    if (['completed','failed','timeout'].includes(status)) {
+      clearInterval(delegatedPollTimer);
+      delegatedPollTimer = null;
+      const report = data.report || ((data.job || {}).result || {}).summary || status;
+      delegatedChatLog.innerHTML += `<div class="example-card"><strong>Agent 回复</strong><p>${escapeHtml(report).slice(0, 3000)}</p></div>`;
+      setStatus('Delegated Agent 任务结束：' + status, status === 'completed' ? 'ok' : 'warn');
+    }
+  } catch (err) {
+    delegatedPlaygroundResult.innerHTML = '读取 Job 失败：' + escapeHtml(err && err.message ? err.message : err);
+  }
+}
+function renderDelegatedJobResult(data) {
+  const job = data.job || {};
+  const events = data.events || [];
+  const artifacts = data.artifacts || [];
+  const report = data.report || '';
+  const result = job.result || {};
+  return `
+    <section class="beginner-box">
+      <h3>Job 状态：${escapeHtml(job.status || '-')}</h3>
+      <p><strong>摘要：</strong>${escapeHtml(job.summary || result.summary || '')}</p>
+      <p><strong>Job ID：</strong>${escapeHtml(job.job_id || '')}</p>
+    </section>
+    <div class="preview-summary">
+      <div><strong>状态</strong>${escapeHtml(job.status || '-')}</div>
+      <div><strong>事件</strong>${escapeHtml(String(events.length))} 条</div>
+      <div><strong>产物</strong>${escapeHtml(String(artifacts.length))} 个</div>
+      <div><strong>Task Pack</strong>${escapeHtml(job.task_pack_path || '-')}</div>
+    </div>
+    <section class="preview-section">
+      <h3>Agent 回复 / report.md</h3>
+      <div class="md-body">${renderMarkdownForModal(report || result.summary || '暂无 report.md')}</div>
+    </section>
+    <section class="preview-section">
+      <h3>产物</h3>
+      <div>${artifacts.length ? artifacts.map(a => `<span class="pill">${escapeHtml(a.name || '')} · ${escapeHtml(String(a.size || 0))} bytes</span>`).join(' ') : '<span class="desc">暂无产物</span>'}</div>
+    </section>
+    <details class="preview-dev-details" open>
+      <summary>过程 Events</summary>
+      ${previewSection('Events', 'Job 的状态流转、runner 启动、完成或失败记录。', events)}
+    </details>
+    <details class="preview-dev-details">
+      <summary>完整 Job JSON</summary>
+      ${previewSection('Job', '生成工程 /api/jobs/{job_id} 返回。', job)}
+      ${previewSection('Result', 'artifacts/result.json 解析结果。', result)}
+    </details>`;
+}
 function openDemoPlayground() {
   document.getElementById('demoPlaygroundMask').classList.add('open');
   if (!demoProjectName.value.trim()) demoProjectName.value = localStorage.getItem('apd_demo_project_name') || (protocol.project_name || 'test-agent-demo');
