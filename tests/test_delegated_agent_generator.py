@@ -67,8 +67,9 @@ def test_delegated_agent_zip_contains_runtime_and_bundled_runner(tmp_path):
     assert not any("node_modules" in name for name in names)
     assert not any("/.git/" in name for name in names)
     runner_source = zipfile.ZipFile(zip_path).read("test-delegated-agent/backend/app/runtime/openclaude_runner.py").decode("utf-8")
-    assert "pty.openpty()" in runner_source
-    assert "stdin=slave_fd" in runner_source
+    assert '"-p"' in runner_source
+    assert '"stream-json"' in runner_source
+    assert "process.stdin.write(task_pack)" in runner_source
     assert "runner_screen" in runner_source
 
 

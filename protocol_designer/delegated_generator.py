@@ -1006,6 +1006,40 @@ def _visible_tail(value: str, limit_lines: int = 18, limit_chars: int = 3000) ->
     return "\n".join(compact[-limit_lines:])[-limit_chars:]
 
 
+def _summarize_stream_json(line: str) -> tuple[str, str]:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return "text", line.strip()
+    event_type = str(payload.get("type") or payload.get("subtype") or "json")
+    subtype = str(payload.get("subtype") or "")
+    if event_type == "system" and subtype:
+        message = subtype
+        if payload.get("error_status"):
+            message += f" status={payload.get('error_status')}"
+        if payload.get("attempt"):
+            message += f" attempt={payload.get('attempt')}/{payload.get('max_retries')}"
+        if payload.get("model"):
+            message += f" model={payload.get('model')}"
+        return f"system:{subtype}", message
+    if event_type in {"assistant", "result", "user"}:
+        parts: list[str] = []
+        message = payload.get("message")
+        if isinstance(message, dict):
+            for item in message.get("content") or []:
+                if isinstance(item, dict):
+                    if item.get("type") == "text" and item.get("text"):
+                        parts.append(str(item.get("text")))
+                    elif item.get("type") == "tool_use":
+                        parts.append(f"调用工具：{item.get('name') or 'unknown'}")
+        if payload.get("result"):
+            parts.append(str(payload.get("result")))
+        if payload.get("summary"):
+            parts.append(str(payload.get("summary")))
+        return event_type, "\n".join(parts).strip() or line.strip()
+    return event_type, line.strip()
+
+
 def _fake_run(job_id: str, task_pack: str) -> dict[str, Any]:
     root = job_dir(job_id)
     artifacts = root / "artifacts"
@@ -1119,6 +1153,92 @@ def _run_with_pty(job_id: str, command: list[str], root: Path, env: dict[str, st
     return {"process": process, "timed_out": timed_out}
 
 
+def _run_print_stream(job_id: str, command: list[str], root: Path, env: dict[str, str], timeout_seconds: int, task_pack: str) -> dict[str, Any]:
+    env = dict(env)
+    env.pop("FORCE_COLOR", None)
+    env["NO_COLOR"] = "1"
+    env["TERM"] = "dumb"
+    process = subprocess.Popen(
+        command,
+        cwd=str(root),
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    with PROCESS_LOCK:
+        RUNNING_PROCESSES[job_id] = process
+        LAST_OUTPUT_AT[job_id] = time.time()
+    append_event(job_id, "runner_process_started", "open_claude 子进程已启动（print stream-json 模式）", {"pid": process.pid, "capture": "stream-json"})
+    try:
+        if process.stdin:
+            process.stdin.write(task_pack)
+            process.stdin.close()
+    except Exception as exc:
+        append_event(job_id, "runner_stdin_failed", f"写入 Task Pack 失败：{exc}", {"pid": process.pid})
+
+    deadline = time.time() + timeout_seconds
+    timed_out = False
+    last_heartbeat_at = time.time() - 8
+    stdout_buffer = ""
+    stderr_buffer = ""
+    summary_buffer = ""
+    stream_map = {}
+    if process.stdout:
+        stream_map[process.stdout] = "stdout.log"
+    if process.stderr:
+        stream_map[process.stderr] = "stderr.log"
+    try:
+        while process.poll() is None or stream_map:
+            if process.poll() is None and time.time() > deadline:
+                timed_out = True
+                process.kill()
+                append_event(job_id, "runner_timeout", "真实 open_claude 超时，已终止进程", {"pid": process.pid, "timeout_seconds": timeout_seconds})
+            if not stream_map:
+                break
+            readable, _, _ = select.select(list(stream_map.keys()), [], [], 0.5)
+            for stream in readable:
+                line = stream.readline()
+                if line == "":
+                    stream_map.pop(stream, None)
+                    continue
+                log_name = stream_map.get(stream) or "stdout.log"
+                append_log(job_id, log_name, line)
+                LAST_OUTPUT_AT[job_id] = time.time()
+                if log_name == "stdout.log":
+                    stdout_buffer = (stdout_buffer + line)[-20000:]
+                    event_type, text = _summarize_stream_json(line.strip())
+                    if text:
+                        summary_buffer = (summary_buffer + f"[{event_type}] {text}\n")[-12000:]
+                        append_event(job_id, "runner_output", text[:240], {"stream": "stream-json", "event_type": event_type, "text": text[-3000:]})
+                else:
+                    stderr_buffer = (stderr_buffer + line)[-8000:]
+                    if line.strip():
+                        summary_buffer = (summary_buffer + f"[stderr] {line.strip()}\n")[-12000:]
+                        append_event(job_id, "runner_output", line.strip()[:240], {"stream": "stderr", "text": line.strip()[-2000:]})
+            if time.time() - last_heartbeat_at >= 3:
+                last_heartbeat_at = time.time()
+                silence_seconds = round(time.time() - LAST_OUTPUT_AT.get(job_id, time.time()), 1)
+                screen_text = _visible_tail(summary_buffer or stdout_buffer or stderr_buffer, limit_lines=18, limit_chars=3000)
+                append_event(
+                    job_id,
+                    "runner_screen",
+                    "open_claude 当前 stream-json 输出快照",
+                    {"pid": process.pid, "silence_seconds": silence_seconds, "capture": "stream-json", "text": screen_text},
+                )
+                append_event(job_id, "runner_heartbeat", "open_claude 仍在运行", {"pid": process.pid, "silence_seconds": silence_seconds, "capture": "stream-json"})
+    finally:
+        with PROCESS_LOCK:
+            RUNNING_PROCESSES.pop(job_id, None)
+            LAST_OUTPUT_AT.pop(job_id, None)
+
+    return {"process": process, "timed_out": timed_out}
+
+
 def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
     settings = get_settings()
     root = job_dir(job_id).resolve()
@@ -1153,17 +1273,21 @@ def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
         "node",
         "--enable-source-maps",
         str(settings.open_claude_cli),
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
         "--dangerously-skip-permissions",
         "--add-dir",
         str(root),
-        task_pack,
     ]
-    command_preview = " ".join(command[:-1]) + " <task_pack>"
+    command_preview = " ".join(command) + " < task_pack"
     append_event(job_id, "runner_start", "启动真实 open_claude", {"cwd": str(root), "add_dir": str(root), "command": command_preview, "timeout_seconds": settings.job_timeout_seconds})
     append_log(job_id, "stdout.log", "[open_claude command]\n" + command_preview + "\n\n")
-    pty_result = _run_with_pty(job_id, command, root, env, settings.job_timeout_seconds)
-    process = pty_result["process"]
-    timed_out = bool(pty_result.get("timed_out"))
+    stream_result = _run_print_stream(job_id, command, root, env, settings.job_timeout_seconds, task_pack)
+    process = stream_result["process"]
+    timed_out = bool(stream_result.get("timed_out"))
     exit_code = process.returncode
     if timed_out:
         return {"exit_code": exit_code, "mode": "real", "timeout": True}
@@ -1172,7 +1296,7 @@ def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
         stderr_tail = _tail(root / "trace" / "stderr.log")
         stdout_tail = _tail(root / "trace" / "stdout.log")
         raise RuntimeError(
-            "open_claude 执行失败。可能是模型网关、Key、Node 依赖或首次交互确认导致。"
+            "open_claude 执行失败。可能是模型网关、Key、Node 依赖或工具执行失败导致。"
             f"\nexit_code={exit_code}\nstdout_tail={stdout_tail}\nstderr_tail={stderr_tail}"
         )
     return {"exit_code": exit_code, "mode": "real", "timeout": False}
