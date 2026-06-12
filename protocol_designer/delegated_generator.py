@@ -963,6 +963,9 @@ from __future__ import annotations
 
 import json
 import os
+import pty
+import re
+import select
 import subprocess
 import threading
 import time
@@ -983,6 +986,24 @@ def _tail(path: Path, limit: int = 4000) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+
+
+ANSI_RE = re.compile(r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]|\x1b[78])")
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _clean_terminal_text(value: str) -> str:
+    text = ANSI_RE.sub("", value)
+    text = CONTROL_RE.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
+def _visible_tail(value: str, limit_lines: int = 18, limit_chars: int = 3000) -> str:
+    lines = [line.rstrip() for line in value.splitlines()]
+    compact = [line for line in lines if line.strip()]
+    return "\n".join(compact[-limit_lines:])[-limit_chars:]
 
 
 def _fake_run(job_id: str, task_pack: str) -> dict[str, Any]:
@@ -1023,6 +1044,79 @@ def _reader(job_id: str, stream, log_name: str) -> None:
             stream.close()
         except Exception:
             pass
+
+
+def _run_with_pty(job_id: str, command: list[str], root: Path, env: dict[str, str], timeout_seconds: int) -> dict[str, Any]:
+    master_fd, slave_fd = pty.openpty()
+    env = dict(env)
+    env.setdefault("TERM", "xterm-256color")
+    env.setdefault("FORCE_COLOR", "1")
+    process = subprocess.Popen(
+        command,
+        cwd=str(root),
+        env=env,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+    with PROCESS_LOCK:
+        RUNNING_PROCESSES[job_id] = process
+        LAST_OUTPUT_AT[job_id] = time.time()
+    append_event(job_id, "runner_process_started", "open_claude 子进程已启动（PTY 捕获模式）", {"pid": process.pid, "capture": "pty"})
+
+    deadline = time.time() + timeout_seconds
+    timed_out = False
+    last_heartbeat_at = time.time() - 8
+    screen_buffer = ""
+    pending = ""
+    try:
+        while process.poll() is None:
+            if time.time() > deadline:
+                timed_out = True
+                process.kill()
+                append_event(job_id, "runner_timeout", "真实 open_claude 超时，已终止进程", {"pid": process.pid, "timeout_seconds": timeout_seconds})
+                break
+            readable, _, _ = select.select([master_fd], [], [], 0.5)
+            if readable:
+                try:
+                    chunk = os.read(master_fd, 8192)
+                except OSError:
+                    chunk = b""
+                if chunk:
+                    raw = chunk.decode("utf-8", errors="replace")
+                    cleaned = _clean_terminal_text(raw)
+                    if cleaned.strip():
+                        append_log(job_id, "stdout.log", cleaned)
+                        LAST_OUTPUT_AT[job_id] = time.time()
+                        screen_buffer = (screen_buffer + cleaned)[-12000:]
+                        pending += cleaned
+                        visible = _visible_tail(pending, limit_lines=10, limit_chars=2200)
+                        if visible:
+                            append_event(job_id, "runner_output", visible[:240], {"stream": "pty", "text": visible})
+                            pending = ""
+            if time.time() - last_heartbeat_at >= 3:
+                last_heartbeat_at = time.time()
+                silence_seconds = round(time.time() - LAST_OUTPUT_AT.get(job_id, time.time()), 1)
+                screen_text = _visible_tail(screen_buffer, limit_lines=18, limit_chars=3000)
+                append_event(
+                    job_id,
+                    "runner_screen",
+                    "open_claude 当前终端屏幕快照",
+                    {"pid": process.pid, "silence_seconds": silence_seconds, "capture": "pty", "text": screen_text},
+                )
+                append_event(job_id, "runner_heartbeat", "open_claude 仍在运行", {"pid": process.pid, "silence_seconds": silence_seconds, "capture": "pty"})
+    finally:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        with PROCESS_LOCK:
+            RUNNING_PROCESSES.pop(job_id, None)
+            LAST_OUTPUT_AT.pop(job_id, None)
+
+    return {"process": process, "timed_out": timed_out}
 
 
 def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
@@ -1067,45 +1161,9 @@ def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
     command_preview = " ".join(command[:-1]) + " <task_pack>"
     append_event(job_id, "runner_start", "启动真实 open_claude", {"cwd": str(root), "add_dir": str(root), "command": command_preview, "timeout_seconds": settings.job_timeout_seconds})
     append_log(job_id, "stdout.log", "[open_claude command]\n" + command_preview + "\n\n")
-    process = subprocess.Popen(
-        command,
-        cwd=str(root),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-    )
-    with PROCESS_LOCK:
-        RUNNING_PROCESSES[job_id] = process
-        LAST_OUTPUT_AT[job_id] = time.time()
-    append_event(job_id, "runner_process_started", "open_claude 子进程已启动", {"pid": process.pid})
-    stdout_thread = threading.Thread(target=_reader, args=(job_id, process.stdout, "stdout.log"), daemon=True)
-    stderr_thread = threading.Thread(target=_reader, args=(job_id, process.stderr, "stderr.log"), daemon=True)
-    stdout_thread.start()
-    stderr_thread.start()
-
-    deadline = time.time() + settings.job_timeout_seconds
-    timed_out = False
-    last_heartbeat_at = time.time()
-    while process.poll() is None:
-        if time.time() > deadline:
-            timed_out = True
-            process.kill()
-            append_event(job_id, "runner_timeout", "真实 open_claude 超时，已终止进程", {"pid": process.pid, "timeout_seconds": settings.job_timeout_seconds})
-            break
-        if time.time() - last_heartbeat_at >= 10:
-            last_heartbeat_at = time.time()
-            silence_seconds = round(time.time() - LAST_OUTPUT_AT.get(job_id, time.time()), 1)
-            append_event(job_id, "runner_heartbeat", "open_claude 仍在运行", {"pid": process.pid, "silence_seconds": silence_seconds})
-        time.sleep(0.5)
-    stdout_thread.join(timeout=2)
-    stderr_thread.join(timeout=2)
-    with PROCESS_LOCK:
-        RUNNING_PROCESSES.pop(job_id, None)
-        LAST_OUTPUT_AT.pop(job_id, None)
+    pty_result = _run_with_pty(job_id, command, root, env, settings.job_timeout_seconds)
+    process = pty_result["process"]
+    timed_out = bool(pty_result.get("timed_out"))
     exit_code = process.returncode
     if timed_out:
         return {"exit_code": exit_code, "mode": "real", "timeout": True}

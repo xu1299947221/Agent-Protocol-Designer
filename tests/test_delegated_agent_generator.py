@@ -13,7 +13,22 @@ def create_fake_open_claude(root: Path) -> Path:
     (source / "bin").mkdir()
     (source / "node_modules" / "ignored").mkdir(parents=True)
     (source / ".git").mkdir()
-    (source / "dist" / "cli.js").write_text("console.log('fake open_claude')\n", encoding="utf-8")
+    (source / "dist" / "cli.js").write_text(
+        """#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+console.log('open_claude thinking: received task pack');
+fs.mkdirSync(path.join(process.cwd(), 'artifacts'), { recursive: true });
+fs.writeFileSync(path.join(process.cwd(), 'artifacts', 'report.md'), '# Real Runner Smoke\\n\\nopen_claude thinking captured.\\n');
+fs.writeFileSync(path.join(process.cwd(), 'artifacts', 'result.json'), JSON.stringify({
+  status: 'completed',
+  summary: 'real runner smoke completed',
+  artifacts: ['report.md', 'result.json'],
+  next_actions: []
+}, null, 2));
+""",
+        encoding="utf-8",
+    )
     (source / "src" / "index.ts").write_text("export {}\n", encoding="utf-8")
     (source / "bin" / "cli.js").write_text("#!/usr/bin/env node\n", encoding="utf-8")
     (source / "package.json").write_text('{"name":"openclaude"}\n', encoding="utf-8")
@@ -51,6 +66,10 @@ def test_delegated_agent_zip_contains_runtime_and_bundled_runner(tmp_path):
     assert "test-delegated-agent/runner/open_claude_manifest.json" in names
     assert not any("node_modules" in name for name in names)
     assert not any("/.git/" in name for name in names)
+    runner_source = zipfile.ZipFile(zip_path).read("test-delegated-agent/backend/app/runtime/openclaude_runner.py").decode("utf-8")
+    assert "pty.openpty()" in runner_source
+    assert "stdin=slave_fd" in runner_source
+    assert "runner_screen" in runner_source
 
 
 def test_generated_backend_fake_runner_runs_end_to_end(tmp_path, monkeypatch):
@@ -124,3 +143,39 @@ def test_delegated_playground_starts_and_runs_fake_job(tmp_path):
     assert detail["summary"] == "fake runner completed"
     assert any(item["name"] == "report.md" for item in artifacts["artifacts"])
     assert "Fake Runner" in report
+
+
+def test_delegated_playground_real_runner_captures_pty_output(tmp_path):
+    source = create_fake_open_claude(tmp_path)
+    manager = DelegatedPlaygroundManager(tmp_path / "playground")
+    session = {
+        "session_id": "session-real",
+        "title": "Delegated Real",
+        "protocol": {"project_name": "delegated-real", "domain_summary": "real debug"},
+    }
+
+    item = manager.start(
+        session,
+        project_name="delegated-real",
+        open_claude_source=source,
+        fake_runner=False,
+    )
+    try:
+        created = manager.create_job(item["delegated_id"], "请生成 report.md 和 result.json")
+        detail = {}
+        events = {}
+        for _ in range(50):
+            detail = manager.get_job(item["delegated_id"], created["job_id"])
+            events = manager.events(item["delegated_id"], created["job_id"])
+            if detail["status"] in {"completed", "failed", "timeout"}:
+                break
+        logs = manager.job_logs(item["delegated_id"], created["job_id"])
+    finally:
+        manager.stop(item["delegated_id"])
+
+    event_types = {event["type"] for event in events["events"]}
+    assert detail["status"] == "completed"
+    assert detail["summary"] == "real runner smoke completed"
+    assert "runner_process_started" in event_types
+    assert "runner_output" in event_types or "runner_screen" in event_types
+    assert "open_claude thinking" in logs["stdout"]
