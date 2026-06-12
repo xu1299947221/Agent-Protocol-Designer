@@ -2278,7 +2278,7 @@ async function refreshRuntimes(){try{const res=await fetch('/api/delegated-playg
 function selectRuntime(id,notify=true){currentDelegatedId=id;localStorage.setItem('apd_delegated_id',id);if(notify)status('已选择运行实例：'+id);document.getElementById('sessionInfo').textContent='运行实例：'+id;loadRuntimeConfig();}
 async function startRuntime(){if(!sessionId){status('没有 session_id，请从 APD 主页面导出产物区打开本页');return;}localStorage.setItem('apd_delegated_project_name',projectName.value.trim());localStorage.setItem('apd_delegated_agent_goal',agentGoal.value.trim());localStorage.setItem('apd_delegated_default_task',defaultTask.value.trim());localStorage.setItem('apd_delegated_open_claude',openClaudeSource.value.trim());status('正在生成并启动 Delegated Agent...');diagBody.innerHTML='<div class="card"><h3>正在启动</h3><div class="small">正在生成临时工程、复制 open_claude、启动 FastAPI。首次启动可能需要十几秒。</div></div>';try{const res=await fetch('/api/delegated-playground/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,project_name:projectName.value.trim(),agent_goal:agentGoal.value.trim(),default_task:defaultTask.value.trim(),open_claude_source:openClaudeSource.value.trim()||'/home/data/rag/open_claude/Openclaude-openclaude',fake_runner:fakeRunner.value!=='0'})});const data=await res.json();if(!res.ok)throw new Error(data.error||'启动失败');selectRuntime(data.delegated_id,false);diagBody.innerHTML=section('启动成功','现在可以在中间对话框发送任务。',data);await refreshRuntimes();status('Delegated Agent 已启动');}catch(e){diagBody.innerHTML='<div class="card"><h3>启动失败</h3><pre>'+esc(e.message||e)+'</pre><div class="small">优先检查 open_claude 路径和 dist/cli.js。</div></div>';status('启动失败：'+(e.message||e));}}
 async function stopRuntime(id){id=id||currentDelegatedId;if(!id){status('没有可停止实例');return;}try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(id)}/stop`,{method:'POST'});const data=await res.json();if(!res.ok)throw new Error(data.error||'停止失败');if(currentDelegatedId===id){currentDelegatedId='';localStorage.removeItem('apd_delegated_id');}diagBody.innerHTML=section('已停止','临时服务进程已停止。',data);await refreshRuntimes();status('已停止');}catch(e){status('停止失败：'+(e.message||e));}}
-async function restartRuntime(){if(!currentDelegatedId){status('没有可重启实例，请先生成并启动');return;}if(pollTimer){clearInterval(pollTimer);pollTimer=null;}status('正在重启当前 Agent 服务...');diagBody.innerHTML='<div class="card"><h3>正在重启当前 Agent</h3><div class="small">这会重启当前工作区的 FastAPI 进程，让 Agent IDE / open_claude 刚修改的代码生效；不会重新生成工程。</div></div>';try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/restart`,{method:'POST'});const data=await res.json();if(!res.ok)throw new Error(data.error||'重启失败');currentJobId='';currentJobSnapshot=null;currentLlmDiagnosisText='';turns=[];renderChat();diagBody.innerHTML=section('重启完成','当前 Agent 服务已重新加载代码。请重新发送测试话术验证改动是否生效。',data);await refreshRuntimes();document.getElementById('sessionInfo').textContent='运行实例：'+currentDelegatedId+' · 已重启';status('当前 Agent 已重启，代码改动已重新加载');}catch(e){diagBody.innerHTML='<div class="card"><h3>重启失败</h3><pre>'+esc(e.message||e)+'</pre><div class="small">如果是端口占用或启动错误，请查看生成工程日志或重新生成并启动。</div></div>';status('重启失败：'+(e.message||e));}}
+async function restartRuntime(){if(!currentDelegatedId){status('没有可重启实例，请先生成并启动');return;}if(pollTimer){clearInterval(pollTimer);pollTimer=null;}status('正在重启当前 Agent 服务...');diagBody.innerHTML='<div class="card"><h3>正在重启当前 Agent</h3><div class="small">这会重启当前工作区的 FastAPI 进程，让 工程开发台 / open_claude 刚修改的代码生效；不会重新生成工程。</div></div>';try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/restart`,{method:'POST'});const data=await res.json();if(!res.ok)throw new Error(data.error||'重启失败');currentJobId='';currentJobSnapshot=null;currentLlmDiagnosisText='';turns=[];renderChat();diagBody.innerHTML=section('重启完成','当前 Agent 服务已重新加载代码。请重新发送测试话术验证改动是否生效。',data);await refreshRuntimes();document.getElementById('sessionInfo').textContent='运行实例：'+currentDelegatedId+' · 已重启';status('当前 Agent 已重启，代码改动已重新加载');}catch(e){diagBody.innerHTML='<div class="card"><h3>重启失败</h3><pre>'+esc(e.message||e)+'</pre><div class="small">如果是端口占用或启动错误，请查看生成工程日志或重新生成并启动。</div></div>';status('重启失败：'+(e.message||e));}}
 async function loadRuntimeConfig(){if(!currentDelegatedId)return;try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/config`);const data=await res.json();if(!res.ok)throw new Error(data.error||'配置读取失败');diagBody.innerHTML=renderConfig(data);status('运行前检查完成');}catch(e){diagBody.innerHTML='<div class="card"><h3>运行前检查失败</h3><pre>'+esc(e.message||e)+'</pre></div>';}}
 function renderConfig(data){const r=data.runtime||{};return `<div class="card"><h3>运行前检查</h3><div class="chips"><span class="chip ${r.fake_runner?'ok':'warn'}">${r.fake_runner?'fake runner':'真实 runner'}</span><span class="chip ${r.node_available?'ok':'bad'}">Node ${r.node_available?'可用':'不可用'}</span><span class="chip ${r.open_claude_cli_exists?'ok':'bad'}">CLI ${r.open_claude_cli_exists?'存在':'不存在'}</span><span class="chip ${r.model_configured?'ok':'warn'}">模型 ${r.model_configured?'已配置':'未配置'}</span></div><div class="small">Agent：${esc(data.agent_name||'')}<br/>目标：${esc(data.agent_goal||'')}</div></div>${section('完整配置','这里来自生成工程的 /api/config。',data)}`;}
 function fillHello(){message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';}
@@ -2297,13 +2297,13 @@ function eventTimeline(events){if(!events.length)return'<div class="small">暂�
 function renderOpenClaudeProcess(data){const events=data.events||[],logs=data.logs||{},thinking=data.thinking||{};const runnerEvents=events.filter(e=>String(e.type||'').startsWith('runner_'));const start=runnerEvents.find(e=>e.type==='runner_start')||{};const proc=runnerEvents.find(e=>e.type==='runner_process_started')||{};const outputs=runnerEvents.filter(e=>e.type==='runner_output'||e.type==='runner_screen').slice(-12);const heartbeats=runnerEvents.filter(e=>e.type==='runner_heartbeat').slice(-5);return `<div class="card"><h3>open_claude 执行过程</h3><div class="summary-grid"><div class="summary-row"><b>命令</b><span>${esc(((start.data||{}).command)||'未启动')}</span></div><div class="summary-row"><b>PID</b><span>${esc(String(thinking.pid||(proc.data||{}).pid||'-'))}</span></div><div class="summary-row"><b>工作目录</b><span>${esc(((start.data||{}).cwd)||'-')}</span></div><div class="summary-row"><b>超时</b><span>${esc(String(((start.data||{}).timeout_seconds)||'-'))} 秒</span></div></div><div class="card" style="margin-top:10px"><h4>当前深度思考 / CLI 屏幕</h4><div class="small">${esc(thinking.explain||'展示 open_claude 当前可见输出。')}</div><pre>${esc(latestRunnerThinking(data)||'等待 open_claude 输出...')}</pre></div>${heartbeats.length?`<details open><summary>运行心跳</summary>${eventTimeline(heartbeats)}</details>`:''}${outputs.length?`<details open><summary>最近输出事件</summary>${eventTimeline(outputs)}</details>`:'<div class="help">还没有捕获到 open_claude 输出。如果状态一直 running，可能是在模型请求、首次确认、或 CLI 无输出等待。</div>'}</div><details open><summary>stdout / stderr 原始日志</summary><h4>stdout.log</h4><pre>${esc(logs.stdout||'暂无 stdout 输出')}</pre><h4>stderr.log</h4><pre>${esc(logs.stderr||'暂无 stderr 输出')}</pre></details>`;}
 function whiteboxLayer(title,desc,payload,open=false){return `<details ${open?'open':''}><summary>${esc(title)}</summary><div class="small" style="margin:8px 0">${esc(desc||'')}</div><pre>${esc(safeJson(payload))}</pre></details>`;}
 function renderWhitebox(data){const wb=data.whitebox||{};return `<div class="card"><h3>白盒过程</h3><div class="small">这一块对应真实 Delegated Agent 链路：Task Pack → Runner/open_claude → stdout/stderr → Artifacts → Agent 回复 → Events。不是只看日志，而是把每层输入输出拆开看。</div></div>${whiteboxLayer('1. Task Pack / 本轮任务输入','APD 交给委托 Agent 的结构化任务包，决定 open_claude 到底要做什么。',wb.task_pack,true)}${whiteboxLayer('2. Runner / open_claude 启动','是否真的启动 open_claude、命令是什么、工作目录在哪、PID 和超时是多少。',wb.runner,true)}${whiteboxLayer('3. LLM 与 CLI 输出','open_claude 的 stdout/stderr、流式输出和当前屏幕，是判断卡住/无回复/模型失败的证据。',wb.llm_and_cli_output,true)}${whiteboxLayer('4. Agent 回复解析','最终给用户看的内容来自哪里：report.md、result.summary，还是 stdout 解析。',wb.agent_reply,true)}${whiteboxLayer('5. Artifacts / 产物协议','检查 report.md/result.json 是否按约定生成。',wb.artifacts,false)}${whiteboxLayer('6. Events / Trace','Job 状态流转和 runner 事件，用来复盘全过程。',wb.events,false)}`;}
-function renderDiagnosisPanel(data){const d=data.diagnosis||{};const s=diagnosisSummary(d);return `<div class="card"><h3>诊断与修复</h3><div class="summary-grid"><div class="summary-row"><b>是否正常</b><span class="summary-status ${s.cls}">${esc(s.status)}</span></div><div class="summary-row"><b>优先看</b><span>${esc(s.layer)} · ${esc(s.file)}</span></div><div class="summary-row"><b>原因</b><span>${esc(s.reason)}</span></div><div class="summary-row"><b>建议</b><span>${esc(s.action)}</span></div></div><div class="chips">${(d.levels||[]).map(x=>`<span class="chip ${x.key==='ok'?'ok':(Number(x.confidence||0)>0.8?'bad':'warn')}">${esc(x.label||x.key)} · ${esc(String(Math.round(Number(x.confidence||0)*100)))}%</span>`).join('')}</div><div class="quick-row"><button class="primary" onclick="sendDelegatedFixToAi()">让 AI 修这个问题</button><button onclick="runDelegatedLlmDiagnosis()">LLM 诊断本轮</button><button onclick="copyRepairTask()">复制修复任务</button><button onclick="copyWhitebox()">复制白盒 JSON</button></div><div id="llmDiagnosisBox" class="small" style="margin-top:8px;white-space:pre-wrap">点击“让 AI 修这个问题”会优先发送到 Agent IDE 已启动的 ttyd 终端；没有终端时会复制修复任务并打开 Agent IDE。</div></div>`;}
+function renderDiagnosisPanel(data){const d=data.diagnosis||{};const s=diagnosisSummary(d);return `<div class="card"><h3>诊断与修复</h3><div class="summary-grid"><div class="summary-row"><b>是否正常</b><span class="summary-status ${s.cls}">${esc(s.status)}</span></div><div class="summary-row"><b>优先看</b><span>${esc(s.layer)} · ${esc(s.file)}</span></div><div class="summary-row"><b>原因</b><span>${esc(s.reason)}</span></div><div class="summary-row"><b>建议</b><span>${esc(s.action)}</span></div></div><div class="chips">${(d.levels||[]).map(x=>`<span class="chip ${x.key==='ok'?'ok':(Number(x.confidence||0)>0.8?'bad':'warn')}">${esc(x.label||x.key)} · ${esc(String(Math.round(Number(x.confidence||0)*100)))}%</span>`).join('')}</div><div class="quick-row"><button class="primary" onclick="sendDelegatedFixToAi()">让 AI 修这个问题</button><button onclick="runDelegatedLlmDiagnosis()">LLM 诊断本轮</button><button onclick="copyRepairTask()">复制修复任务</button><button onclick="copyWhitebox()">复制白盒 JSON</button></div><div id="llmDiagnosisBox" class="small" style="margin-top:8px;white-space:pre-wrap">点击“让 AI 修这个问题”会优先发送到 工程开发台已启动的 ttyd 终端；没有终端时会复制修复任务并打开工程开发台。</div></div>`;}
 function renderJob(data){const job=data.job||{},events=data.events||[],arts=data.artifacts||[],result=job.result||{},report=data.report||'',reply=currentAgentReply(data);const cls=job.status==='completed'?'ok':(['failed','timeout'].includes(job.status)?'bad':'warn');const isRunning=job.status==='running';return `<div class="card"><h3>本轮结论</h3><div class="summary-grid"><div class="summary-row"><b>状态</b><span class="summary-status ${cls}">${esc(job.status||'-')}</span></div><div class="summary-row"><b>摘要</b><span>${esc(job.summary||result.summary||'')}</span></div><div class="summary-row"><b>Job</b><span>${esc(job.job_id||'')}</span></div><div class="summary-row"><b>Task Pack</b><span>${esc(job.task_pack_path||'-')}</span></div></div>${isRunning?'<div class="help">当前不是 queued，已经进入 running。若长时间不结束，通常是真实 open_claude 在执行、等待首次确认、模型网关卡住或没有输出。下面会显示 open_claude 命令、PID、心跳和输出。</div>':''}</div>${renderDiagnosisPanel(data)}<div class="card"><h3>Agent 回复</h3><div class="md-body">${md(reply||report||result.summary||'暂无回复文本，任务还没完成或正在工具调用。')}</div></div>${renderWhitebox(data)}${renderOpenClaudeProcess(data)}<div class="card"><h3>产物</h3><div class="chips">${arts.length?arts.map(a=>`<span class="file">${esc(a.name||'')} · ${esc(String(a.size||0))} bytes</span>`).join(''):'<span class="small">暂无产物</span>'}</div></div><details><summary>完整 Job / Result JSON</summary>${section('Job','生成工程 /api/jobs/{job_id} 返回。',job)}${section('Result','artifacts/result.json 解析结果。',result)}</details>`;}
 function showCurrentWhitebox(){if(!currentJobSnapshot){status('还没有 Job 白盒数据');return;}diagBody.innerHTML=renderJob(currentJobSnapshot);status('已显示当前 Job 白盒详情');}
 function copyText(text){navigator.clipboard?.writeText(String(text||''));}
 function copyWhitebox(){if(!currentJobSnapshot){status('没有白盒数据可复制');return;}copyText(safeJson(currentJobSnapshot.whitebox||{}));status('已复制白盒 JSON');}
-function copyRepairTask(){if(!currentJobSnapshot){status('没有修复任务可复制');return;}copyText(currentJobSnapshot.repair_task||'');status('已复制修复任务，可发给 Agent IDE 里的 open_claude');}
-async function sendDelegatedFixToAi(){if(!currentJobSnapshot){status('没有可修复的 Job，请先发送一轮任务');return;}const task=currentJobSnapshot.repair_task||'';if(!task){status('当前没有生成修复任务');return;}localStorage.setItem('apd_cli_collab_intent',task);localStorage.setItem('apd_collab_intent',task);localStorage.setItem('apd_developer_request',task);localStorage.setItem('apd_pm_guide_stage','debugged');const ttydSessionId=localStorage.getItem('apd_ttyd_session_id')||'';if(!ttydSessionId){copyText(task);status('未发现已启动的 Agent IDE 终端：已复制修复任务，并打开 Agent IDE');window.open('/?open_agent_ide=1','_blank');return;}status('正在把修复任务发送给 Agent IDE 终端...');try{const res=await fetch(`/api/dev-studio/ttyd/${encodeURIComponent(ttydSessionId)}/send`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:task,raw:false,columns:120,rows:32})});const data=await res.json();if(!res.ok||!data.sent)throw new Error(data.error||'发送失败');status('已发送给 Agent IDE 里的 open_claude，请查看终端执行结果');}catch(e){copyText(task);status('发送失败，已复制修复任务：'+(e.message||e));window.open('/?open_agent_ide=1','_blank');}}
+function copyRepairTask(){if(!currentJobSnapshot){status('没有修复任务可复制');return;}copyText(currentJobSnapshot.repair_task||'');status('已复制修复任务，可发给 工程开发台里的 open_claude');}
+async function sendDelegatedFixToAi(){if(!currentJobSnapshot){status('没有可修复的 Job，请先发送一轮任务');return;}const task=currentJobSnapshot.repair_task||'';if(!task){status('当前没有生成修复任务');return;}localStorage.setItem('apd_cli_collab_intent',task);localStorage.setItem('apd_collab_intent',task);localStorage.setItem('apd_developer_request',task);localStorage.setItem('apd_pm_guide_stage','debugged');const ttydSessionId=localStorage.getItem('apd_ttyd_session_id')||'';if(!ttydSessionId){copyText(task);status('未发现已启动的 工程开发台终端：已复制修复任务，并打开工程开发台');window.open('/?open_agent_ide=1','_blank');return;}status('正在把修复任务发送给 工程开发台终端...');try{const res=await fetch(`/api/dev-studio/ttyd/${encodeURIComponent(ttydSessionId)}/send`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:task,raw:false,columns:120,rows:32})});const data=await res.json();if(!res.ok||!data.sent)throw new Error(data.error||'发送失败');status('已发送给 工程开发台里的 open_claude，请查看终端执行结果');}catch(e){copyText(task);status('发送失败，已复制修复任务：'+(e.message||e));window.open('/?open_agent_ide=1','_blank');}}
 async function runDelegatedLlmDiagnosis(){if(!currentDelegatedId||!currentJobId){status('没有当前 Job，无法诊断');return;}const box=document.getElementById('llmDiagnosisBox');if(box)box.textContent='LLM 正在读取当前 Job 白盒数据并诊断...';try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/job/${encodeURIComponent(currentJobId)}/llm-diagnose`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:currentJobId,settings:llmSettings()})});const data=await res.json();currentLlmDiagnosisText=String(data.diagnosis||'无诊断内容')+(data.error?'\n\n失败原因：'+data.error:'');if(box)box.innerHTML=`<div class="md-body">${md(currentLlmDiagnosisText)}</div><div class="quick-row" style="margin-top:8px"><button onclick="copyText(currentLlmDiagnosisText)">复制诊断原文</button><button class="primary" onclick="copyRepairTask()">复制修复任务</button></div>`;status(data.ok?'LLM 诊断完成':'LLM 诊断未成功，已显示离线说明');}catch(e){if(box)box.textContent='LLM 诊断请求失败：'+(e.message||e);status('LLM 诊断请求失败');}}
 function section(title,desc,data){return `<div class="card"><h3>${esc(title)}</h3><div class="small">${esc(desc||'')}</div><pre>${esc(safeJson(data))}</pre></div>`;}
 (async function init(){projectName.value=localStorage.getItem('apd_delegated_project_name')||'delegated-agent-demo';agentGoal.value=localStorage.getItem('apd_delegated_agent_goal')||'';defaultTask.value=localStorage.getItem('apd_delegated_default_task')||defaultTask.value;openClaudeSource.value=localStorage.getItem('apd_delegated_open_claude')||openClaudeSource.value;loadDiagSettings();message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';if(!sessionId)status('没有 session_id：请从 APD 主页面“导出产物”打开本页');else status('已绑定 APD 会话：'+sessionId);await refreshRuntimes();if(currentDelegatedId)loadRuntimeConfig();})();
@@ -2691,7 +2691,8 @@ HTML = r"""
   </div>
   <div class="top-actions">
     <button onclick="focusDesignerInput()" class="primary step-btn"><span class="step-index">1</span>设计 Agent</button>
-    <button onclick="openCliCollabAssistant()" class="primary step-btn"><span class="step-index">2</span>Agent IDE</button>
+    <button onclick="openCliCollabAssistant()" class="primary step-btn"><span class="step-index">2</span>工程开发台</button>
+    <button onclick="openDelegatedInspector()" class="primary step-btn"><span class="step-index">3</span>真实调试台</button>
     <button onclick="openHistory()" class="secondary-link">历史</button>
     <details class="tool-menu">
       <summary>更多</summary>
@@ -2776,9 +2777,9 @@ HTML = r"""
             <span class="export-header-actions">
               <button onclick="downloadScaffold()">生成可运行 Demo zip</button>
               <button onclick="downloadDelegatedAgent()" class="primary">生成 Delegated Agent zip</button>
-              <button onclick="openDelegatedInspector()" class="primary">打开 Delegated 调试台</button>
+              <button onclick="openDelegatedInspector()" class="primary">打开真实调试台</button>
               <button onclick="openDemoPlayground()">在线运行 Demo</button>
-              <button onclick="openCliCollabAssistant()">打开 Agent IDE</button>
+              <button onclick="openCliCollabAssistant()">打开工程开发台</button>
               <span class="export-actions" id="exportActions">
                 <button type="button" class="export-toggle" onclick="toggleExportMenu(event)">更多导出 ▾</button>
                 <span class="menu-panel" onclick="event.stopPropagation()">
@@ -3322,7 +3323,7 @@ OPENAI_MODEL=your-model</code></pre>
 <div class="drawer-mask" id="interactiveCliMask" onclick="closeInteractiveCli(event)">
   <aside class="drawer wide-drawer cli-drawer" onclick="event.stopPropagation()">
     <div class="drawer-head">
-      <h2>Agent IDE 工作台</h2>
+      <h2>工程开发台</h2>
       <div>
         <button type="button" onclick="startTtydCli()" class="primary">启动终端</button>
         <button onclick="stopTtydCli()">停止</button>
@@ -3338,7 +3339,7 @@ OPENAI_MODEL=your-model</code></pre>
       <section id="cliCollabAssistantPanel" class="cli-command-deck">
         <div class="cli-command-head">
           <div class="cli-command-title">
-            <strong>Agent IDE 需求区</strong>
+            <strong>工程需求区</strong>
           </div>
           <span class="cli-command-pill">需求 → AI 开发 → 重启 → 调试 → 修复</span>
         </div>
@@ -3361,7 +3362,7 @@ OPENAI_MODEL=your-model</code></pre>
               </select>
             </label>
             <button onclick="pmGuideNext()" class="primary">帮我推进下一步</button>
-            <button onclick="openAgentIdeDelegatedInspector()" class="primary">真实 Agent 调试</button>
+            <button onclick="openAgentIdeDelegatedInspector()" class="primary">打开真实调试台</button>
             <button onclick="openStandaloneRuntimeInspector()">工程 Demo 调试</button>
             <button onclick="resetPmGuideFlow()">重新开始流程</button>
             <details class="cli-help-details">
@@ -3378,7 +3379,7 @@ OPENAI_MODEL=your-model</code></pre>
           <summary>使用说明 / 模式区别</summary>
           <div class="cli-command-meta">
             <span>第一次终端安全确认：右侧回车一次</span>
-            <span>真实 Agent 调试：打开 Delegated Inspector，像最终用户一样对话，并查看 open_claude 执行过程</span>
+            <span>真实调试台：像最终用户一样对话，并查看 open_claude 执行过程</span>
             <span>不满意结果：继续描述哪里不对</span>
             <span>日常补充/明确功能/复杂改造按需求复杂度选择</span>
           </div>
@@ -3395,13 +3396,13 @@ OPENAI_MODEL=your-model</code></pre>
               <strong>工程控制台</strong>
               <div id="collabWorkspaceSummary" class="small">正在读取当前工作区...</div>
             </div>
-            <span class="cli-command-pill">工作区 / 重启 / 调试 / 版本 / 下载</span>
+            <span class="cli-command-pill">工程工作区 / 终端 / 版本 / 下载</span>
           </div>
           <div class="collab-console-actions">
             <button onclick="ensureCollabWorkspace()" class="primary">创建/选择工作区</button>
             <button onclick="openInteractiveCli()">查看右侧执行区</button>
             <button onclick="restartAgentDebugSession()">重启当前 Agent</button>
-            <button onclick="openAgentIdeDelegatedInspector()" class="primary">真实 Agent 调试</button>
+            <button onclick="openAgentIdeDelegatedInspector()" class="primary">打开真实调试台</button>
             <button onclick="openStandaloneRuntimeInspector()">工程 Demo 调试</button>
             <button onclick="saveCurrentWorkspaceVersion()">保存版本</button>
             <button onclick="downloadCurrentWorkspace()">下载工程</button>
@@ -3541,7 +3542,7 @@ OPENAI_MODEL=your-model</code></pre>
     <div class="drawer-head">
       <h2>高级工程工具箱</h2>
       <div>
-        <button onclick="openInteractiveCli()" class="primary">回到 Agent IDE</button>
+        <button onclick="openInteractiveCli()" class="primary">回到工程开发台</button>
         <button onclick="createDevWorkspace()">创建工作区</button>
         <button onclick="buildDeveloperPlan()">生成任务包</button>
         <button onclick="runDeveloperRunner()">执行 Runner</button>
@@ -3551,7 +3552,7 @@ OPENAI_MODEL=your-model</code></pre>
     <div class="guide-body">
       <div id="devAdvancedTools" class="case-hero">
         <h1>高级工程工具箱</h1>
-        <p>主流程已经合并到“Agent IDE”。这里保留文件编辑、Runner 细节、工作区列表、快速运行等兜底能力。</p>
+        <p>主流程已经合并到“工程开发台”。这里保留文件编辑、Runner 细节、工作区列表、快速运行等兜底能力。</p>
         <span class="case-tag">高级工具：文件编辑 / Runner 配置 / 工作区版本 / 手动验收</span>
       </div>
 
@@ -3569,7 +3570,7 @@ OPENAI_MODEL=your-model</code></pre>
 
 
       <details id="collabAssistantPanel" class="preview-dev-details" open>
-        <summary>Agent IDE 助手：把你的想法翻译给 open_claude</summary>
+        <summary>工程开发助手：把你的想法翻译给 open_claude</summary>
         <div class="beginner-box">
           <h3>你不用先想“要改哪个文件、属于哪个架构层”</h3>
           <p>直接用中文描述：我想加什么能力、哪里效果不好、报了什么错。APD 会先判断这是新增功能、修 Bug、效果优化、工具接入还是验收问题，再整理成 open_claude 能执行的工程任务。</p>
@@ -3803,10 +3804,10 @@ function buildLandingGuideState() {
   const hasTask = !!document.getElementById('developerTaskText');
   if (!hasSession) return {stage:'0. 新建会话', next:'先新建或打开一个会话，再描述你要落地的 Agent。', prompt:'我想设计一个 Agent，它要解决的业务问题是：', actions:[['新会话','resetSession','primary']]};
   if (!hasProtocol || !hasOps) return {stage:'1. 需求澄清', next:'先把场景说清楚，让 APD 一次只问一个问题，收敛出核心操作和边界。', prompt:'请一步一步问我问题，帮我把这个 Agent 场景拆成意图、操作、状态、工具、校验和交付物。', actions:[['继续设计','focusDesignerInput','primary'], ['场景判断','quickSceneClassify','']]};
-  if (!hasWorkspace) return {stage:'2. 生成工程', next:'协议已经有雏形了，下一步创建可持续开发工作区，作为 open_claude 修改的真实项目。', prompt:'请基于当前协议生成开发落地计划，告诉我应该先实现哪些状态、规划器、校验器和执行器。', actions:[['打开 Agent IDE','openCliCollabAssistant','primary'], ['创建工作区','createDevWorkspace','']]};
-  if (!hasTtyd) return {stage:'3. 接入 open_claude', next:'工作区已准备好，下一步打开终端，让 open_claude 先阅读项目结构，不要急着改代码。', prompt:'请先阅读当前项目结构，告诉我这个 Agent 工程每个关键文件负责什么。先不要修改代码。', actions:[['打开 Agent IDE','openCliCollabAssistant','primary'], ['生成任务包','buildDeveloperPlan','']]};
-  if (!hasTask) return {stage:'4. 生成任务包', next:'终端已接入。现在让 APD 生成工程任务包，再复制给 open_claude 执行，避免随口开发导致失控。', prompt:'请根据当前协议和工作区，生成一份给 open_claude 的工程任务包：包含目标、要改文件、禁止事项、验收标准和运行命令。', actions:[['打开 Agent IDE','openCliCollabAssistant','primary'], ['生成任务包','buildDeveloperPlan','']]};
-  return {stage:'5. 协作开发/验收', next:'把任务包发给 open_claude，改完后运行 Demo 验收；符合预期就保存版本，不符合就生成下一轮修复任务包。', prompt:'请按这个任务包修改项目。改完后说明改了哪些文件、如何运行、如何验证。不要改无关文件。', actions:[['打开 Agent IDE','openCliCollabAssistant','primary'], ['运行验收','runDevWorkspace',''], ['保存版本','saveDevVersion','']]};
+  if (!hasWorkspace) return {stage:'2. 生成工程', next:'协议已经有雏形了，下一步创建可持续开发工作区，作为 open_claude 修改的真实项目。', prompt:'请基于当前协议生成开发落地计划，告诉我应该先实现哪些状态、规划器、校验器和执行器。', actions:[['打开工程开发台','openCliCollabAssistant','primary'], ['创建工作区','createDevWorkspace','']]};
+  if (!hasTtyd) return {stage:'3. 接入 open_claude', next:'工作区已准备好，下一步打开终端，让 open_claude 先阅读项目结构，不要急着改代码。', prompt:'请先阅读当前项目结构，告诉我这个 Agent 工程每个关键文件负责什么。先不要修改代码。', actions:[['打开工程开发台','openCliCollabAssistant','primary'], ['生成任务包','buildDeveloperPlan','']]};
+  if (!hasTask) return {stage:'4. 生成任务包', next:'终端已接入。现在让 APD 生成工程任务包，再复制给 open_claude 执行，避免随口开发导致失控。', prompt:'请根据当前协议和工作区，生成一份给 open_claude 的工程任务包：包含目标、要改文件、禁止事项、验收标准和运行命令。', actions:[['打开工程开发台','openCliCollabAssistant','primary'], ['生成任务包','buildDeveloperPlan','']]};
+  return {stage:'5. 协作开发/验收', next:'把任务包发给 open_claude，改完后运行 Demo 验收；符合预期就保存版本，不符合就生成下一轮修复任务包。', prompt:'请按这个任务包修改项目。改完后说明改了哪些文件、如何运行、如何验证。不要改无关文件。', actions:[['打开工程开发台','openCliCollabAssistant','primary'], ['运行验收','runDevWorkspace',''], ['保存版本','saveDevVersion','']]};
 }
 function renderLandingGuide() {
   const el = document.getElementById('landingGuide');
@@ -4673,8 +4674,8 @@ function openAgentIdeDelegatedInspector() {
   params.set('embedded', '1');
   window.open('/delegated-inspector?' + params.toString(), '_blank');
   setPmGuideStage('debugged');
-  renderPmFlowGuide('debugged', '已打开真实 Agent 调试页：先生成并启动 Delegated Agent，再像最终用户一样连续对话。');
-  setStatus('已打开真实 Agent 调试页：用于查看 open_claude 执行过程、回复和产物', 'ok');
+  renderPmFlowGuide('debugged', '已打开真实调试台：先生成并启动 Delegated Agent，再像最终用户一样连续对话。');
+  setStatus('已打开真实调试台：用于查看 open_claude 执行过程、回复和产物', 'ok');
 }
 function openPreview() {
   document.getElementById('previewMask').classList.add('open');
@@ -5695,7 +5696,7 @@ function openCollabAssistant() {
       panel.scrollIntoView({behavior:'smooth', block:'start'});
     }
     if (typeof collabUserIntent !== 'undefined') collabUserIntent.focus();
-    refreshCollabWorkspaceConsole();setStatus('已打开 Agent IDE：直接描述你的想法或问题', 'ok');
+    refreshCollabWorkspaceConsole();setStatus('已打开工程开发台：直接描述你的想法或问题', 'ok');
   }, 120);
 }
 function closeDevStudio(event) {
@@ -6053,7 +6054,7 @@ async function copyCollabTask() {
   const text = currentCollabTask || buildCollabTask();
   if (!text) return;
   await navigator.clipboard.writeText(text);
-  setStatus('Agent IDE 任务已复制，打开终端后粘贴给 open_claude', 'ok');
+  setStatus('工程开发任务已复制，打开终端后粘贴给 open_claude', 'ok');
 }
 async function useCollabAsDeveloperRequest() {
   const text = (collabUserIntent.value || '').trim();
@@ -6755,7 +6756,7 @@ function openCliCollabAssistant() {
     const input = document.getElementById('cliCollabUserIntent');
     if (input) input.focus();
     renderPmFlowGuide(getPmGuideStage());
-    setStatus('已打开全屏 Agent IDE：左边写需求，右边看 open_claude 执行', 'ok');
+    setStatus('已打开全屏工程开发台：左边写需求，右边看 open_claude 执行', 'ok');
   }, 160);
 }
 
