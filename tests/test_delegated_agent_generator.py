@@ -180,3 +180,39 @@ def test_delegated_playground_real_runner_captures_pty_output(tmp_path):
     assert "runner_process_started" in event_types
     assert "runner_output" in event_types or "runner_screen" in event_types
     assert "open_claude thinking" in logs["stdout"]
+
+
+def test_generated_result_parser_extracts_stream_json_reply(tmp_path, monkeypatch):
+    source = create_fake_open_claude(tmp_path)
+    data, _ = generate_delegated_agent_project(
+        protocol={"project_name": "demo"},
+        project_name="reply-agent",
+        agent_name="Reply Agent",
+        agent_goal="Extract reply",
+        open_claude_source=source,
+    )
+    zip_path = tmp_path / "delegated.zip"
+    zip_path.write_bytes(data)
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(tmp_path / "out")
+
+    project = tmp_path / "out" / "reply-agent"
+    monkeypatch.setenv("DATA_DIR", str(project / "data"))
+    sys.path.insert(0, str(project / "backend"))
+    try:
+        from app.runtime import trace_store, workspace_manager
+        from app.runtime.result_parser import parse_result
+
+        job = workspace_manager.create_job("请回复")
+        trace_store.append_log(job["job_id"], "stdout.log", '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}}\n')
+        trace_store.append_log(job["job_id"], "stdout.log", '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"，世界"}}}\n')
+        result = parse_result(job["job_id"])
+    finally:
+        sys.path.remove(str(project / "backend"))
+        for name in list(sys.modules):
+            if name == "app" or name.startswith("app."):
+                sys.modules.pop(name, None)
+
+    assert result["status"] == "partial"
+    assert result["reply"] == "你好，世界"
+    assert result["summary"] == "你好，世界"

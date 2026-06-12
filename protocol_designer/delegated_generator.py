@@ -924,6 +924,34 @@ from .trace_store import read_log
 from .workspace_manager import job_dir
 
 
+def extract_reply_from_stdout(stdout: str) -> str:
+    parts: list[str] = []
+    final_text = ""
+    for line in stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event_type = payload.get("type")
+        if event_type == "stream_event":
+            event = payload.get("event") or {}
+            if event.get("type") == "content_block_delta":
+                delta = event.get("delta") or {}
+                if delta.get("type") == "text_delta" and delta.get("text"):
+                    parts.append(str(delta.get("text") or ""))
+        elif event_type == "assistant":
+            message = payload.get("message") or {}
+            if isinstance(message, dict):
+                texts = [str(item.get("text") or "") for item in message.get("content") or [] if isinstance(item, dict) and item.get("type") == "text"]
+                if texts:
+                    final_text = "\n".join(texts).strip()
+        elif event_type == "result" and payload.get("result"):
+            final_text = str(payload.get("result") or "").strip()
+    return final_text or "".join(parts)
+
+
 def parse_result(job_id: str) -> dict[str, Any]:
     artifacts_root = job_dir(job_id) / "artifacts"
     result_path = artifacts_root / "result.json"
@@ -946,9 +974,11 @@ def parse_result(job_id: str) -> dict[str, Any]:
             }
     stdout_tail = read_log(job_id, "stdout.log")[-8000:]
     stderr_tail = read_log(job_id, "stderr.log")[-4000:]
+    reply = extract_reply_from_stdout(stdout_tail)
     return {
         "status": "partial",
-        "summary": "没有找到 artifacts/result.json，已返回日志摘要。",
+        "summary": reply or "没有找到 artifacts/result.json，已返回日志摘要。",
+        "reply": reply,
         "artifacts": [item["name"] for item in list_artifacts(job_id)],
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
@@ -1038,6 +1068,32 @@ def _summarize_stream_json(line: str) -> tuple[str, str]:
             parts.append(str(payload.get("summary")))
         return event_type, "\n".join(parts).strip() or line.strip()
     return event_type, line.strip()
+
+
+def _extract_reply_text(line: str) -> tuple[str, str]:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return "", ""
+    event_type = str(payload.get("type") or "")
+    if event_type == "stream_event":
+        event = payload.get("event") or {}
+        if event.get("type") == "content_block_delta":
+            delta = event.get("delta") or {}
+            if delta.get("type") == "text_delta" and delta.get("text"):
+                return "delta", str(delta.get("text") or "")
+        return "", ""
+    if event_type == "assistant":
+        parts: list[str] = []
+        message = payload.get("message") or {}
+        if isinstance(message, dict):
+            for item in message.get("content") or []:
+                if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                    parts.append(str(item.get("text")))
+        return "assistant", "\n".join(parts).strip()
+    if event_type == "result" and payload.get("result"):
+        return "result", str(payload.get("result") or "").strip()
+    return "", ""
 
 
 def _fake_run(job_id: str, task_pack: str) -> dict[str, Any]:
@@ -1187,6 +1243,7 @@ def _run_print_stream(job_id: str, command: list[str], root: Path, env: dict[str
     stdout_buffer = ""
     stderr_buffer = ""
     summary_buffer = ""
+    reply_buffer = ""
     stream_map = {}
     if process.stdout:
         stream_map[process.stdout] = "stdout.log"
@@ -1212,6 +1269,14 @@ def _run_print_stream(job_id: str, command: list[str], root: Path, env: dict[str
                 if log_name == "stdout.log":
                     stdout_buffer = (stdout_buffer + line)[-20000:]
                     event_type, text = _summarize_stream_json(line.strip())
+                    reply_type, reply_text = _extract_reply_text(line.strip())
+                    if reply_text:
+                        if reply_type == "delta":
+                            reply_buffer = (reply_buffer + reply_text)[-12000:]
+                            append_event(job_id, "runner_reply_delta", reply_text[:240], {"text": reply_buffer[-4000:]})
+                        else:
+                            reply_buffer = reply_text[-12000:]
+                            append_event(job_id, "runner_reply", reply_text[:240], {"source": reply_type, "text": reply_text[-8000:]})
                     if text:
                         summary_buffer = (summary_buffer + f"[{event_type}] {text}\n")[-12000:]
                         append_event(job_id, "runner_output", text[:240], {"stream": "stream-json", "event_type": event_type, "text": text[-3000:]})
@@ -1228,7 +1293,7 @@ def _run_print_stream(job_id: str, command: list[str], root: Path, env: dict[str
                     job_id,
                     "runner_screen",
                     "open_claude 当前 stream-json 输出快照",
-                    {"pid": process.pid, "silence_seconds": silence_seconds, "capture": "stream-json", "text": screen_text},
+                    {"pid": process.pid, "silence_seconds": silence_seconds, "capture": "stream-json", "text": screen_text, "reply_text": reply_buffer[-4000:]},
                 )
                 append_event(job_id, "runner_heartbeat", "open_claude 仍在运行", {"pid": process.pid, "silence_seconds": silence_seconds, "capture": "stream-json"})
     finally:
