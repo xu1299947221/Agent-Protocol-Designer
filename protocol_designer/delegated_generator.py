@@ -976,6 +976,7 @@ from .workspace_manager import job_dir
 
 RUNNING_PROCESSES: dict[str, subprocess.Popen] = {}
 PROCESS_LOCK = threading.RLock()
+LAST_OUTPUT_AT: dict[str, float] = {}
 
 
 def _tail(path: Path, limit: int = 4000) -> str:
@@ -1013,6 +1014,10 @@ def _reader(job_id: str, stream, log_name: str) -> None:
             if not line:
                 break
             append_log(job_id, log_name, line)
+            LAST_OUTPUT_AT[job_id] = time.time()
+            text = line.strip()
+            if text:
+                append_event(job_id, "runner_output", f"{log_name}: {text[:240]}", {"stream": log_name, "text": text[:1000]})
     finally:
         try:
             stream.close()
@@ -1059,8 +1064,9 @@ def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
         str(root),
         task_pack,
     ]
-    append_event(job_id, "runner_start", "启动真实 open_claude", {"cwd": str(root), "add_dir": str(root)})
-    append_log(job_id, "stdout.log", "[open_claude command]\n" + " ".join(command[:-1]) + " <task_pack>\n\n")
+    command_preview = " ".join(command[:-1]) + " <task_pack>"
+    append_event(job_id, "runner_start", "启动真实 open_claude", {"cwd": str(root), "add_dir": str(root), "command": command_preview, "timeout_seconds": settings.job_timeout_seconds})
+    append_log(job_id, "stdout.log", "[open_claude command]\n" + command_preview + "\n\n")
     process = subprocess.Popen(
         command,
         cwd=str(root),
@@ -1074,6 +1080,8 @@ def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
     )
     with PROCESS_LOCK:
         RUNNING_PROCESSES[job_id] = process
+        LAST_OUTPUT_AT[job_id] = time.time()
+    append_event(job_id, "runner_process_started", "open_claude 子进程已启动", {"pid": process.pid})
     stdout_thread = threading.Thread(target=_reader, args=(job_id, process.stdout, "stdout.log"), daemon=True)
     stderr_thread = threading.Thread(target=_reader, args=(job_id, process.stderr, "stderr.log"), daemon=True)
     stdout_thread.start()
@@ -1081,21 +1089,27 @@ def run_openclaude(job_id: str, task_pack: str) -> dict[str, Any]:
 
     deadline = time.time() + settings.job_timeout_seconds
     timed_out = False
+    last_heartbeat_at = time.time()
     while process.poll() is None:
         if time.time() > deadline:
             timed_out = True
             process.kill()
-            append_event(job_id, "runner_timeout", "真实 open_claude 超时，已终止进程")
+            append_event(job_id, "runner_timeout", "真实 open_claude 超时，已终止进程", {"pid": process.pid, "timeout_seconds": settings.job_timeout_seconds})
             break
+        if time.time() - last_heartbeat_at >= 10:
+            last_heartbeat_at = time.time()
+            silence_seconds = round(time.time() - LAST_OUTPUT_AT.get(job_id, time.time()), 1)
+            append_event(job_id, "runner_heartbeat", "open_claude 仍在运行", {"pid": process.pid, "silence_seconds": silence_seconds})
         time.sleep(0.5)
     stdout_thread.join(timeout=2)
     stderr_thread.join(timeout=2)
     with PROCESS_LOCK:
         RUNNING_PROCESSES.pop(job_id, None)
+        LAST_OUTPUT_AT.pop(job_id, None)
     exit_code = process.returncode
     if timed_out:
         return {"exit_code": exit_code, "mode": "real", "timeout": True}
-    append_event(job_id, "runner_exit", "真实 open_claude 已退出", {"exit_code": exit_code})
+    append_event(job_id, "runner_exit", "真实 open_claude 已退出", {"exit_code": exit_code, "pid": process.pid})
     if exit_code != 0:
         stderr_tail = _tail(root / "trace" / "stderr.log")
         stdout_tail = _tail(root / "trace" / "stdout.log")
