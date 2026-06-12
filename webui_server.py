@@ -679,26 +679,18 @@ async def api_delegated_playground_job(request):
     delegated_id = request.path_params.get("delegated_id") or ""
     job_id = request.path_params.get("job_id") or ""
     try:
-        job = DELEGATED_PLAYGROUND.get_job(delegated_id, job_id)
-        events = DELEGATED_PLAYGROUND.events(delegated_id, job_id)
-        artifacts = DELEGATED_PLAYGROUND.artifacts(delegated_id, job_id)
-        report = ""
-        artifact_names = [item.get("name") for item in artifacts.get("artifacts") or [] if isinstance(item, dict)]
-        if "report.md" in artifact_names:
-            try:
-                report = DELEGATED_PLAYGROUND.artifact_text(delegated_id, job_id, "report.md")
-            except Exception:
-                report = ""
-        logs = {}
-        try:
-            logs = DELEGATED_PLAYGROUND.job_logs(delegated_id, job_id)
-        except Exception:
-            logs = {"stdout": "", "stderr": ""}
-        event_items = events.get("events") or []
+        snapshot = DELEGATED_PLAYGROUND.get_job_snapshot(delegated_id, job_id)
+        job = snapshot.get("job") or {}
+        event_items = snapshot.get("events") or []
+        artifacts = snapshot.get("artifacts") or []
+        report = str(snapshot.get("report") or "")
+        logs = snapshot.get("logs") or {"stdout": "", "stderr": ""}
         thinking = build_delegated_thinking(job, event_items, logs)
-        return JSONResponse({"job": job, "events": event_items, "artifacts": artifacts.get("artifacts") or [], "report": report, "logs": logs, "thinking": thinking})
+        return JSONResponse({"job": job, "events": event_items, "artifacts": artifacts, "report": report, "logs": logs, "thinking": thinking})
     except KeyError:
         return JSONResponse({"error": "delegated playground not found"}, status_code=404)
+    except FileNotFoundError:
+        return JSONResponse({"error": "job not found"}, status_code=404)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 

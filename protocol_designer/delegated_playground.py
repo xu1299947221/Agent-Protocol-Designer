@@ -162,6 +162,36 @@ class DelegatedPlaygroundManager:
         item.last_result = {"job": result}
         return result
 
+    def get_job_snapshot(self, delegated_id: str, job_id: str, *, event_limit: int = 160, log_limit: int = 12000) -> dict[str, Any]:
+        item = self.get(delegated_id)
+        job_root = item.project_root / "data" / "jobs" / job_id
+        job_path = job_root / "job.json"
+        if not job_path.exists():
+            raise FileNotFoundError(f"job not found: {job_id}")
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+        artifacts_root = job_root / "artifacts"
+        artifacts = []
+        if artifacts_root.exists():
+            for path in sorted(artifacts_root.rglob("*")):
+                if path.is_file():
+                    rel = path.relative_to(artifacts_root).as_posix()
+                    artifacts.append({"name": rel, "path": rel, "size": path.stat().st_size})
+        report_path = artifacts_root / "report.md"
+        report = ""
+        if report_path.exists():
+            report = _read_text_tail(report_path, limit=log_limit)
+        trace_root = job_root / "trace"
+        return {
+            "job": job,
+            "events": _read_jsonl_tail(trace_root / "events.jsonl", limit=event_limit),
+            "artifacts": artifacts,
+            "report": report,
+            "logs": {
+                "stdout": _read_text_tail(trace_root / "stdout.log", limit=log_limit),
+                "stderr": _read_text_tail(trace_root / "stderr.log", limit=log_limit),
+            },
+        }
+
     def list_jobs(self, delegated_id: str) -> dict[str, Any]:
         item = self.get(delegated_id)
         result = _get_json(f"{item.base_url}/api/jobs", timeout=12)
@@ -240,6 +270,32 @@ def _get_json(url: str, timeout: int = 8) -> dict[str, Any]:
 def _get_text(url: str, timeout: int = 8) -> str:
     with request.urlopen(url, timeout=timeout) as response:
         return response.read().decode("utf-8", errors="replace")
+
+
+def _read_text_tail(path: Path, limit: int = 12000) -> str:
+    if not path.exists():
+        return ""
+    with path.open("rb") as handle:
+        try:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+        except OSError:
+            handle.seek(0)
+        return handle.read().decode("utf-8", errors="replace")
+
+
+def _read_jsonl_tail(path: Path, limit: int = 160) -> list[dict[str, Any]]:
+    text = _read_text_tail(path, limit=200000)
+    events: list[dict[str, Any]] = []
+    for line in text.splitlines()[-limit:]:
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            events.append({"type": "invalid_event", "message": line})
+    return events
 
 
 def _post_json(url: str, payload: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
