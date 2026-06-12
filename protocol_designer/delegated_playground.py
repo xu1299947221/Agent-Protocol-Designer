@@ -24,6 +24,7 @@ class DelegatedPlaygroundProcess:
     backend_root: Path
     port: int
     process: subprocess.Popen
+    fake_runner: bool = True
     created_at: float = field(default_factory=time.time)
     last_result: dict[str, Any] = field(default_factory=dict)
 
@@ -107,19 +108,7 @@ class DelegatedPlaygroundManager:
         project_root = root_parent / project_name
         backend_root = project_root / "backend"
         port = _find_free_port()
-        env = dict(os.environ)
-        env["OPEN_CLAUDE_FAKE"] = "1" if fake_runner else "0"
-        env["DATA_DIR"] = str((project_root / "data").resolve())
-        process = subprocess.Popen(
-            ["python3", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=str(backend_root),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        process = self._spawn_process(project_root, backend_root, port, fake_runner=fake_runner)
         item = DelegatedPlaygroundProcess(
             delegated_id=delegated_id,
             session_id=session_id,
@@ -128,6 +117,7 @@ class DelegatedPlaygroundManager:
             backend_root=backend_root,
             port=port,
             process=process,
+            fake_runner=fake_runner,
             last_result={"manifest": manifest},
         )
         self._items[delegated_id] = item
@@ -148,6 +138,23 @@ class DelegatedPlaygroundManager:
             except subprocess.TimeoutExpired:
                 item.process.kill()
                 item.process.wait(timeout=3)
+        return item.to_summary()
+
+    def restart(self, delegated_id: str) -> dict[str, Any]:
+        item = self.get(delegated_id)
+        if item.process.poll() is None:
+            item.process.terminate()
+            try:
+                item.process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                item.process.kill()
+                item.process.wait(timeout=3)
+        item.process = self._spawn_process(item.project_root, item.backend_root, item.port, fake_runner=item.fake_runner)
+        wait_result = _wait_http(f"{item.base_url}/health", timeout=8)
+        item.last_result = {"restart": wait_result, "restarted_at": time.time()}
+        if not wait_result.get("ok"):
+            output = self.read_logs(delegated_id, limit=120)
+            raise RuntimeError(f"Delegated Agent 重启失败：{wait_result.get('error') or 'health check failed'}\n{output}")
         return item.to_summary()
 
     def create_job(self, delegated_id: str, message: str) -> dict[str, Any]:
@@ -219,6 +226,21 @@ class DelegatedPlaygroundManager:
     def artifact_text(self, delegated_id: str, job_id: str, name: str) -> str:
         item = self.get(delegated_id)
         return _get_text(f"{item.base_url}/api/jobs/{job_id}/artifacts/{name}", timeout=12)
+
+    def _spawn_process(self, project_root: Path, backend_root: Path, port: int, *, fake_runner: bool) -> subprocess.Popen:
+        env = dict(os.environ)
+        env["OPEN_CLAUDE_FAKE"] = "1" if fake_runner else "0"
+        env["DATA_DIR"] = str((project_root / "data").resolve())
+        return subprocess.Popen(
+            ["python3", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
+            cwd=str(backend_root),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
 
     def read_logs(self, delegated_id: str, limit: int = 120) -> str:
         item = self.get(delegated_id)

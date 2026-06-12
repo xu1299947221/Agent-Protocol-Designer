@@ -660,6 +660,18 @@ async def api_delegated_playground_stop(request):
     return JSONResponse(result)
 
 
+async def api_delegated_playground_restart(request):
+    delegated_id = request.path_params.get("delegated_id") or ""
+    try:
+        result = DELEGATED_PLAYGROUND.restart(delegated_id)
+    except KeyError:
+        return JSONResponse({"error": "delegated playground not found"}, status_code=404)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    audit("delegated_playground_restart", "delegated_playground", delegated_id, {"status": result.get("status"), "pid": result.get("pid")})
+    return JSONResponse(result)
+
+
 async def api_delegated_playground_chat(request):
     delegated_id = request.path_params.get("delegated_id") or ""
     payload = await request.json()
@@ -1957,6 +1969,7 @@ routes = [
     Route("/api/delegated-playground/start", api_delegated_playground_start, methods=["POST"]),
     Route("/api/delegated-playground/list", api_delegated_playground_list),
     Route("/api/delegated-playground/{delegated_id}/stop", api_delegated_playground_stop, methods=["POST"]),
+    Route("/api/delegated-playground/{delegated_id}/restart", api_delegated_playground_restart, methods=["POST"]),
     Route("/api/delegated-playground/{delegated_id}/chat", api_delegated_playground_chat, methods=["POST"]),
     Route("/api/delegated-playground/{delegated_id}/config", api_delegated_playground_config),
     Route("/api/delegated-playground/{delegated_id}/job/{job_id}", api_delegated_playground_job),
@@ -2192,6 +2205,7 @@ DELEGATED_INSPECTOR_HTML = r"""
   <div><h1>Delegated Agent Inspector <span class="sub">委托执行型 Agent 在线调试台</span></h1></div>
   <div class="top-actions">
     <button onclick="startRuntime()" class="primary">生成并启动</button>
+    <button onclick="restartRuntime()">重启当前 Agent</button>
     <button onclick="loadRuntimeConfig()">运行前检查</button>
     <button onclick="stopRuntime()">停止</button>
     <button onclick="location.href='/'">返回 APD</button>
@@ -2231,7 +2245,7 @@ DELEGATED_INSPECTOR_HTML = r"""
     </div>
   </aside>
   <section class="panel chat-panel">
-    <div class="panel-head"><strong>Agent 对话</strong><span id="sessionInfo" class="hint">等待启动</span><div class="quick-row"><button onclick="clearDelegatedSession()">清空会话</button><button onclick="stopDelegatedSession()" class="danger">停止会话</button></div></div>
+    <div class="panel-head"><strong>Agent 对话</strong><span id="sessionInfo" class="hint">等待启动</span><div class="quick-row"><button onclick="restartRuntime()">重启当前 Agent</button><button onclick="clearDelegatedSession()">清空会话</button><button onclick="stopDelegatedSession()" class="danger">停止会话</button></div></div>
     <div id="chatList" class="chat-list"><div class="empty">这里是最终用户视角。启动后直接输入任务，例如“请在 artifacts/report.md 写一段 hello delegated agent，并生成 result.json”。</div></div>
     <div class="chat-input">
       <textarea id="message" placeholder="像最终用户一样输入任务"></textarea>
@@ -2264,6 +2278,7 @@ async function refreshRuntimes(){try{const res=await fetch('/api/delegated-playg
 function selectRuntime(id,notify=true){currentDelegatedId=id;localStorage.setItem('apd_delegated_id',id);if(notify)status('已选择运行实例：'+id);document.getElementById('sessionInfo').textContent='运行实例：'+id;loadRuntimeConfig();}
 async function startRuntime(){if(!sessionId){status('没有 session_id，请从 APD 主页面导出产物区打开本页');return;}localStorage.setItem('apd_delegated_project_name',projectName.value.trim());localStorage.setItem('apd_delegated_agent_goal',agentGoal.value.trim());localStorage.setItem('apd_delegated_default_task',defaultTask.value.trim());localStorage.setItem('apd_delegated_open_claude',openClaudeSource.value.trim());status('正在生成并启动 Delegated Agent...');diagBody.innerHTML='<div class="card"><h3>正在启动</h3><div class="small">正在生成临时工程、复制 open_claude、启动 FastAPI。首次启动可能需要十几秒。</div></div>';try{const res=await fetch('/api/delegated-playground/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,project_name:projectName.value.trim(),agent_goal:agentGoal.value.trim(),default_task:defaultTask.value.trim(),open_claude_source:openClaudeSource.value.trim()||'/home/data/rag/open_claude/Openclaude-openclaude',fake_runner:fakeRunner.value!=='0'})});const data=await res.json();if(!res.ok)throw new Error(data.error||'启动失败');selectRuntime(data.delegated_id,false);diagBody.innerHTML=section('启动成功','现在可以在中间对话框发送任务。',data);await refreshRuntimes();status('Delegated Agent 已启动');}catch(e){diagBody.innerHTML='<div class="card"><h3>启动失败</h3><pre>'+esc(e.message||e)+'</pre><div class="small">优先检查 open_claude 路径和 dist/cli.js。</div></div>';status('启动失败：'+(e.message||e));}}
 async function stopRuntime(id){id=id||currentDelegatedId;if(!id){status('没有可停止实例');return;}try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(id)}/stop`,{method:'POST'});const data=await res.json();if(!res.ok)throw new Error(data.error||'停止失败');if(currentDelegatedId===id){currentDelegatedId='';localStorage.removeItem('apd_delegated_id');}diagBody.innerHTML=section('已停止','临时服务进程已停止。',data);await refreshRuntimes();status('已停止');}catch(e){status('停止失败：'+(e.message||e));}}
+async function restartRuntime(){if(!currentDelegatedId){status('没有可重启实例，请先生成并启动');return;}if(pollTimer){clearInterval(pollTimer);pollTimer=null;}status('正在重启当前 Agent 服务...');diagBody.innerHTML='<div class="card"><h3>正在重启当前 Agent</h3><div class="small">这会重启当前工作区的 FastAPI 进程，让 Agent IDE / open_claude 刚修改的代码生效；不会重新生成工程。</div></div>';try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/restart`,{method:'POST'});const data=await res.json();if(!res.ok)throw new Error(data.error||'重启失败');currentJobId='';currentJobSnapshot=null;currentLlmDiagnosisText='';turns=[];renderChat();diagBody.innerHTML=section('重启完成','当前 Agent 服务已重新加载代码。请重新发送测试话术验证改动是否生效。',data);await refreshRuntimes();document.getElementById('sessionInfo').textContent='运行实例：'+currentDelegatedId+' · 已重启';status('当前 Agent 已重启，代码改动已重新加载');}catch(e){diagBody.innerHTML='<div class="card"><h3>重启失败</h3><pre>'+esc(e.message||e)+'</pre><div class="small">如果是端口占用或启动错误，请查看生成工程日志或重新生成并启动。</div></div>';status('重启失败：'+(e.message||e));}}
 async function loadRuntimeConfig(){if(!currentDelegatedId)return;try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/config`);const data=await res.json();if(!res.ok)throw new Error(data.error||'配置读取失败');diagBody.innerHTML=renderConfig(data);status('运行前检查完成');}catch(e){diagBody.innerHTML='<div class="card"><h3>运行前检查失败</h3><pre>'+esc(e.message||e)+'</pre></div>';}}
 function renderConfig(data){const r=data.runtime||{};return `<div class="card"><h3>运行前检查</h3><div class="chips"><span class="chip ${r.fake_runner?'ok':'warn'}">${r.fake_runner?'fake runner':'真实 runner'}</span><span class="chip ${r.node_available?'ok':'bad'}">Node ${r.node_available?'可用':'不可用'}</span><span class="chip ${r.open_claude_cli_exists?'ok':'bad'}">CLI ${r.open_claude_cli_exists?'存在':'不存在'}</span><span class="chip ${r.model_configured?'ok':'warn'}">模型 ${r.model_configured?'已配置':'未配置'}</span></div><div class="small">Agent：${esc(data.agent_name||'')}<br/>目标：${esc(data.agent_goal||'')}</div></div>${section('完整配置','这里来自生成工程的 /api/config。',data)}`;}
 function fillHello(){message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';}
