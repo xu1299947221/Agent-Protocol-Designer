@@ -305,6 +305,10 @@ async def runtime_inspector_page(request):
     return HTMLResponse(INSPECTOR_HTML)
 
 
+async def delegated_inspector_page(request):
+    return HTMLResponse(DELEGATED_INSPECTOR_HTML)
+
+
 async def api_guide(request):
     return PlainTextResponse(GUIDE_PATH.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
 
@@ -1690,6 +1694,7 @@ routes = [
     Route("/api/logout", api_logout, methods=["POST"]),
     Route("/", index),
     Route("/runtime-inspector", runtime_inspector_page),
+    Route("/delegated-inspector", delegated_inspector_page),
     Route("/api/status", api_status),
     Route("/api/guide", api_guide),
     Route("/api/writing-case", api_writing_case),
@@ -1910,6 +1915,106 @@ function fillWorkflowScenario(){document.getElementById('businessScenario').valu
 if(!workspaceId){status('没有工作区：请从 Agent 开发台点击“打开调试页”');}
 loadDiagLlmSettings();
 renderChat();renderDiag();
+</script>
+</body>
+</html>
+"""
+
+
+DELEGATED_INSPECTOR_HTML = r"""
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Delegated Agent Inspector</title>
+  <style>
+    :root{--bg:#07111f;--panel:#0f172a;--panel2:#111827;--line:#26364e;--text:#e5e7eb;--muted:#94a3b8;--accent:#38bdf8;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--chip:#1e293b}
+    *{box-sizing:border-box}html,body{height:100%;overflow:hidden}body{margin:0;background:linear-gradient(135deg,#020617,#0f172a);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,textarea,select{font:inherit}button{border:1px solid #334155;background:#172033;color:#e5e7eb;border-radius:10px;padding:8px 11px;cursor:pointer}button.primary{background:#0ea5e9;border-color:#38bdf8;color:#00111f;font-weight:800}button.good{background:#14532d;border-color:#22c55e}button.danger{background:#451a1a;border-color:#ef4444}button:disabled{opacity:.55;cursor:not-allowed}
+    header{height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--line);background:rgba(2,6,23,.88)}h1{font-size:18px;margin:0}.sub{color:var(--muted);font-size:12px;margin-left:8px}.top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.status{font-size:12px;color:#bae6fd;max-width:520px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    main{height:calc(100vh - 60px);display:grid;grid-template-columns:320px minmax(460px,1fr) 430px;gap:12px;padding:12px;overflow:hidden}.panel{min-height:0;border:1px solid var(--line);border-radius:18px;background:rgba(15,23,42,.96);display:flex;flex-direction:column;overflow:hidden}.panel-head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}.panel-head strong{color:#e0f2fe}.hint{color:var(--muted);font-size:12px}.body{padding:12px;overflow:auto;display:flex;flex-direction:column;gap:12px}
+    .field label{display:block;color:#cbd5e1;font-size:12px;font-weight:800;margin-bottom:6px}.field textarea,.field input,.field select{width:100%;border:1px solid #334155;background:#020617;color:#e5e7eb;border-radius:12px;padding:9px;min-height:38px}.field textarea{min-height:72px;resize:vertical}.help{margin-top:6px;color:#94a3b8;font-size:12px;line-height:1.45}.quick-row{display:flex;gap:8px;flex-wrap:wrap}.empty{border:1px dashed #334155;border-radius:16px;padding:18px;color:#cbd5e1;background:rgba(15,23,42,.65)}
+    .chat-panel{background:rgba(2,6,23,.48)}.chat-list{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px}.msg{display:flex;flex-direction:column;gap:6px;max-width:88%}.msg.user{align-self:flex-end}.msg.agent{align-self:flex-start}.bubble{border:1px solid #334155;border-radius:16px;padding:11px 13px;background:#111827;white-space:pre-wrap;line-height:1.55}.user .bubble{background:#1d4ed8;border-color:#60a5fa}.agent .bubble{background:#0f172a;border-color:#334155}.meta{font-size:12px;color:#94a3b8}.thinking{color:#bae6fd;background:rgba(14,165,233,.08);border:1px dashed #38bdf8;border-radius:12px;padding:10px;animation:pulseThinking 1.2s ease-in-out infinite}@keyframes pulseThinking{0%,100%{opacity:.72}50%{opacity:1}}
+    .chat-input{border-top:1px solid var(--line);padding:12px;display:grid;grid-template-columns:1fr auto;gap:10px;background:#08111f}.chat-input textarea{width:100%;min-height:78px;resize:vertical;border:1px solid #334155;border-radius:14px;background:#020617;color:#e5e7eb;padding:11px}.send-col{display:flex;flex-direction:column;gap:8px}
+    .card{border:1px solid #26364e;border-radius:14px;background:#08111f;padding:10px}.card h3,.card h4{margin:0 0 8px;color:#e0f2fe}.small{font-size:12px;color:#94a3b8}.chips{display:flex;gap:6px;flex-wrap:wrap;margin:7px 0}.chip{border:1px solid #334155;border-radius:999px;padding:4px 8px;background:#0f172a;color:#cbd5e1;font-size:12px}.chip.ok{border-color:#22c55e;color:#bbf7d0}.chip.warn{border-color:#f59e0b;color:#fde68a}.chip.bad{border-color:#ef4444;color:#fecaca}.summary-grid{display:grid;gap:7px}.summary-row{display:grid;grid-template-columns:92px 1fr;gap:8px;align-items:start;font-size:13px}.summary-row b{color:#93c5fd}.summary-status{display:inline-flex;width:max-content;border-radius:999px;padding:3px 8px;font-size:12px;border:1px solid #334155}.summary-status.ok{border-color:#22c55e;color:#bbf7d0}.summary-status.warn{border-color:#f59e0b;color:#fde68a}.summary-status.bad{border-color:#ef4444;color:#fecaca}
+    details{border:1px solid #26364e;border-radius:12px;padding:9px;background:#020617}summary{cursor:pointer;color:#93c5fd;font-weight:800}pre{white-space:pre-wrap;overflow:auto;max-height:300px;font-size:12px;line-height:1.45;background:#020617;border:1px solid #26364e;border-radius:12px;padding:10px}.md-body{line-height:1.72}.md-body h1,.md-body h2,.md-body h3{color:#e0f2fe;margin:12px 0 8px}.md-body p{margin:8px 0}.md-body code{background:#020617;border:1px solid #26364e;border-radius:5px;padding:1px 4px;color:#bae6fd}.file{font-size:12px;border:1px solid #1d4ed8;color:#bfdbfe;background:#0f172a;border-radius:999px;padding:4px 8px}
+    @media(max-width:1180px){html,body{overflow:auto}main{grid-template-columns:1fr;height:auto}.panel{min-height:420px}.chat-panel{min-height:620px}}
+  </style>
+</head>
+<body>
+<header>
+  <div><h1>Delegated Agent Inspector <span class="sub">委托执行型 Agent 在线调试台</span></h1></div>
+  <div class="top-actions">
+    <button onclick="startRuntime()" class="primary">生成并启动</button>
+    <button onclick="loadRuntimeConfig()">运行前检查</button>
+    <button onclick="stopRuntime()">停止</button>
+    <button onclick="location.href='/'">返回 APD</button>
+    <span id="pageStatus" class="status"></span>
+  </div>
+</header>
+<main>
+  <aside class="panel">
+    <div class="panel-head"><strong>启动与说明</strong><span class="hint">先启动，再对话</span></div>
+    <div class="body">
+      <div class="card">
+        <h3>怎么用</h3>
+        <div class="small">
+          1. 默认保持 fake runner，点击“生成并启动”。<br/>
+          2. 中间像最终用户一样发消息。<br/>
+          3. 右侧看 Job、Events、Artifacts、report.md。<br/>
+          4. fake runner 跑通后，再切真实 open_claude。<br/>
+          5. 如果真实模式失败，优先看右侧错误和生成工程日志。
+        </div>
+      </div>
+      <div class="field"><label>项目名</label><input id="projectName" placeholder="delegated-agent-demo" /></div>
+      <div class="field"><label>运行模式</label><select id="fakeRunner"><option value="1">fake runner：先验证链路</option><option value="0">真实 open_claude：调用模型和执行器</option></select><div class="help">建议先用 fake runner。它不调用模型，只验证 Task Pack、Job、Trace、Artifact 链路。</div></div>
+      <div class="field"><label>Agent 目标</label><textarea id="agentGoal" placeholder="留空自动使用当前协议摘要"></textarea></div>
+      <div class="field"><label>默认任务说明</label><textarea id="defaultTask">请根据用户输入完成任务，并把最终结果写入 artifacts/report.md 和 artifacts/result.json。</textarea></div>
+      <div class="field"><label>open_claude 路径</label><input id="openClaudeSource" value="/home/data/rag/open_claude/Openclaude-openclaude" /></div>
+      <div class="quick-row"><button onclick="startRuntime()" class="primary">生成并启动</button><button onclick="refreshRuntimes()">刷新列表</button></div>
+      <div id="runtimeList" class="card"><div class="small">暂无运行实例。</div></div>
+      <details><summary>真实 open_claude 模式需要什么</summary><div class="small" style="margin-top:8px">生成工程会读取 APD 服务进程环境里的模型配置。真实模式依赖 Node、open_claude 的 dist/cli.js、模型网关、Key、模型名，并可能遇到首次信任目录确认。第一阶段主要先验证闭环。</div></details>
+    </div>
+  </aside>
+  <section class="panel chat-panel">
+    <div class="panel-head"><strong>Agent 对话</strong><span id="sessionInfo" class="hint">等待启动</span></div>
+    <div id="chatList" class="chat-list"><div class="empty">这里是最终用户视角。启动后直接输入任务，例如“请在 artifacts/report.md 写一段 hello delegated agent，并生成 result.json”。</div></div>
+    <div class="chat-input">
+      <textarea id="message" placeholder="像最终用户一样输入任务"></textarea>
+      <div class="send-col"><button class="primary" onclick="sendMessage()">发送</button><button onclick="fillHello()">验收示例</button></div>
+    </div>
+  </section>
+  <aside class="panel">
+    <div class="panel-head"><strong>过程与诊断</strong><span class="hint">当前 Job</span></div>
+    <div id="diagBody" class="body"><div class="empty">发送一轮任务后，这里会显示 Job 状态、Events、Artifacts、Result 和 report.md。</div></div>
+  </aside>
+</main>
+<script>
+const params = new URLSearchParams(location.search);
+let sessionId = params.get('session_id') || localStorage.getItem('apd_session_id') || '';
+let currentDelegatedId = localStorage.getItem('apd_delegated_id') || '';
+let currentJobId = '';
+let pollTimer = null;
+let turns = [];
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function status(msg){document.getElementById('pageStatus').textContent=msg||'';}
+function md(text){let html=esc(text||'');html=html.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\n/g,'<br/>');return html;}
+function safeJson(value){try{return JSON.stringify(value,null,2)}catch(e){return String(value)}}
+function renderRuntimeCard(item){return `<div class="card"><h4>${esc(item.project_name||item.delegated_id)} <span class="chip ${item.status==='running'?'ok':'warn'}">${esc(item.status||'-')}</span></h4><div class="small">ID：${esc(item.delegated_id||'')}<br/>端口：${esc(String(item.port||'-'))} · PID：${esc(String(item.pid||'-'))}<br/>内部地址：${esc(item.base_url||'')}</div><div class="quick-row" style="margin-top:8px"><button onclick="selectRuntime('${esc(item.delegated_id||'')}')">选择</button><button onclick="stopRuntime('${esc(item.delegated_id||'')}')">停止</button></div></div>`}
+async function refreshRuntimes(){try{const res=await fetch('/api/delegated-playground/list');const data=await res.json();const items=data.items||[];if(!currentDelegatedId&&items[0])selectRuntime(items[0].delegated_id,false);runtimeList.innerHTML=items.length?items.map(renderRuntimeCard).join(''):'<div class="small">暂无运行实例。点击“生成并启动”。</div>';}catch(e){runtimeList.innerHTML='<div class="small">加载失败：'+esc(e.message||e)+'</div>';}}
+function selectRuntime(id,notify=true){currentDelegatedId=id;localStorage.setItem('apd_delegated_id',id);if(notify)status('已选择运行实例：'+id);document.getElementById('sessionInfo').textContent='运行实例：'+id;loadRuntimeConfig();}
+async function startRuntime(){if(!sessionId){status('没有 session_id，请从 APD 主页面导出产物区打开本页');return;}localStorage.setItem('apd_delegated_project_name',projectName.value.trim());localStorage.setItem('apd_delegated_agent_goal',agentGoal.value.trim());localStorage.setItem('apd_delegated_default_task',defaultTask.value.trim());localStorage.setItem('apd_delegated_open_claude',openClaudeSource.value.trim());status('正在生成并启动 Delegated Agent...');diagBody.innerHTML='<div class="card"><h3>正在启动</h3><div class="small">正在生成临时工程、复制 open_claude、启动 FastAPI。首次启动可能需要十几秒。</div></div>';try{const res=await fetch('/api/delegated-playground/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,project_name:projectName.value.trim(),agent_goal:agentGoal.value.trim(),default_task:defaultTask.value.trim(),open_claude_source:openClaudeSource.value.trim()||'/home/data/rag/open_claude/Openclaude-openclaude',fake_runner:fakeRunner.value!=='0'})});const data=await res.json();if(!res.ok)throw new Error(data.error||'启动失败');selectRuntime(data.delegated_id,false);diagBody.innerHTML=section('启动成功','现在可以在中间对话框发送任务。',data);await refreshRuntimes();status('Delegated Agent 已启动');}catch(e){diagBody.innerHTML='<div class="card"><h3>启动失败</h3><pre>'+esc(e.message||e)+'</pre><div class="small">优先检查 open_claude 路径和 dist/cli.js。</div></div>';status('启动失败：'+(e.message||e));}}
+async function stopRuntime(id){id=id||currentDelegatedId;if(!id){status('没有可停止实例');return;}try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(id)}/stop`,{method:'POST'});const data=await res.json();if(!res.ok)throw new Error(data.error||'停止失败');if(currentDelegatedId===id){currentDelegatedId='';localStorage.removeItem('apd_delegated_id');}diagBody.innerHTML=section('已停止','临时服务进程已停止。',data);await refreshRuntimes();status('已停止');}catch(e){status('停止失败：'+(e.message||e));}}
+async function loadRuntimeConfig(){if(!currentDelegatedId)return;try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/config`);const data=await res.json();if(!res.ok)throw new Error(data.error||'配置读取失败');diagBody.innerHTML=renderConfig(data);status('运行前检查完成');}catch(e){diagBody.innerHTML='<div class="card"><h3>运行前检查失败</h3><pre>'+esc(e.message||e)+'</pre></div>';}}
+function renderConfig(data){const r=data.runtime||{};return `<div class="card"><h3>运行前检查</h3><div class="chips"><span class="chip ${r.fake_runner?'ok':'warn'}">${r.fake_runner?'fake runner':'真实 runner'}</span><span class="chip ${r.node_available?'ok':'bad'}">Node ${r.node_available?'可用':'不可用'}</span><span class="chip ${r.open_claude_cli_exists?'ok':'bad'}">CLI ${r.open_claude_cli_exists?'存在':'不存在'}</span><span class="chip ${r.model_configured?'ok':'warn'}">模型 ${r.model_configured?'已配置':'未配置'}</span></div><div class="small">Agent：${esc(data.agent_name||'')}<br/>目标：${esc(data.agent_goal||'')}</div></div>${section('完整配置','这里来自生成工程的 /api/config。',data)}`;}
+function fillHello(){message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';}
+async function sendMessage(){if(!currentDelegatedId){status('请先生成并启动');return;}const text=message.value.trim();if(!text){message.focus();return;}message.value='';turns.push({role:'user',text});turns.push({role:'agent',text:'Agent 思考中... 正在创建 Job 并执行 Runner',pending:true});renderChat();diagBody.innerHTML='<div class="card"><h3>任务已发送</h3><div class="thinking">等待 Job 创建...</div></div>';try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});const data=await res.json();if(!res.ok)throw new Error(data.error||'发送失败');currentJobId=data.job_id;turns[turns.length-1]={role:'agent',text:`任务已创建：${currentJobId}\\n状态：${data.status||'-'}`,pending:true};renderChat();startPolling();status('Job 已创建：'+currentJobId);}catch(e){turns[turns.length-1]={role:'agent',text:'发送失败：'+(e.message||e),pending:false,error:true};renderChat();diagBody.innerHTML='<div class="card"><h3>发送失败</h3><pre>'+esc(e.message||e)+'</pre></div>';status('发送失败');}}
+function renderChat(){chatList.innerHTML=turns.length?turns.map(t=>`<div class="msg ${t.role==='user'?'user':'agent'}"><div class="meta">${t.role==='user'?'你':'Agent'}${t.pending?' · 运行中':''}</div><div class="bubble ${t.pending?'thinking':''}">${esc(t.text)}</div></div>`).join(''):'<div class="empty">启动后直接输入真实任务。</div>';chatList.scrollTop=chatList.scrollHeight;}
+function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(pollJob,1300);pollJob();}
+async function pollJob(){if(!currentDelegatedId||!currentJobId)return;try{const res=await fetch(`/api/delegated-playground/${encodeURIComponent(currentDelegatedId)}/job/${encodeURIComponent(currentJobId)}`);const data=await res.json();if(!res.ok)throw new Error(data.error||'读取 Job 失败');diagBody.innerHTML=renderJob(data);const job=data.job||{};const st=(job.status||'').toLowerCase();if(['completed','failed','timeout'].includes(st)){clearInterval(pollTimer);pollTimer=null;const report=data.report||((job.result||{}).summary)||st;turns[turns.length-1]={role:'agent',text:report,pending:false,error:st!=='completed'};renderChat();status('Job 结束：'+st);}}catch(e){diagBody.innerHTML='<div class="card"><h3>读取 Job 失败</h3><pre>'+esc(e.message||e)+'</pre></div>';}}
+function renderJob(data){const job=data.job||{},events=data.events||[],arts=data.artifacts||[],result=job.result||{},report=data.report||'';const cls=job.status==='completed'?'ok':(['failed','timeout'].includes(job.status)?'bad':'warn');return `<div class="card"><h3>本轮结论</h3><div class="summary-grid"><div class="summary-row"><b>状态</b><span class="summary-status ${cls}">${esc(job.status||'-')}</span></div><div class="summary-row"><b>摘要</b><span>${esc(job.summary||result.summary||'')}</span></div><div class="summary-row"><b>Job</b><span>${esc(job.job_id||'')}</span></div><div class="summary-row"><b>Task Pack</b><span>${esc(job.task_pack_path||'-')}</span></div></div></div><div class="card"><h3>Agent 回复 / report.md</h3><div class="md-body">${md(report||result.summary||'暂无 report.md')}</div></div><div class="card"><h3>产物</h3><div class="chips">${arts.length?arts.map(a=>`<span class="file">${esc(a.name||'')} · ${esc(String(a.size||0))} bytes</span>`).join(''):'<span class="small">暂无产物</span>'}</div></div><details open><summary>过程 Events</summary><pre>${esc(safeJson(events))}</pre></details><details><summary>完整 Job / Result JSON</summary>${section('Job','生成工程 /api/jobs/{job_id} 返回。',job)}${section('Result','artifacts/result.json 解析结果。',result)}</details>`;}
+function section(title,desc,data){return `<div class="card"><h3>${esc(title)}</h3><div class="small">${esc(desc||'')}</div><pre>${esc(safeJson(data))}</pre></div>`;}
+(async function init(){projectName.value=localStorage.getItem('apd_delegated_project_name')||'delegated-agent-demo';agentGoal.value=localStorage.getItem('apd_delegated_agent_goal')||'';defaultTask.value=localStorage.getItem('apd_delegated_default_task')||defaultTask.value;openClaudeSource.value=localStorage.getItem('apd_delegated_open_claude')||openClaudeSource.value;message.value='请在 artifacts/report.md 写一段“hello delegated agent”，并生成 artifacts/result.json。';if(!sessionId)status('没有 session_id：请从 APD 主页面“导出产物”打开本页');else status('已绑定 APD 会话：'+sessionId);await refreshRuntimes();if(currentDelegatedId)loadRuntimeConfig();})();
 </script>
 </body>
 </html>
@@ -2379,7 +2484,7 @@ HTML = r"""
             <span class="export-header-actions">
               <button onclick="downloadScaffold()">生成可运行 Demo zip</button>
               <button onclick="downloadDelegatedAgent()" class="primary">生成 Delegated Agent zip</button>
-              <button onclick="openDelegatedPlayground()">在线调试 Delegated</button>
+              <button onclick="openDelegatedInspector()" class="primary">打开 Delegated 调试台</button>
               <button onclick="openDemoPlayground()">在线运行 Demo</button>
               <button onclick="openCliCollabAssistant()">打开 Agent IDE</button>
               <span class="export-actions" id="exportActions">
@@ -4259,6 +4364,10 @@ async function downloadDelegatedAgent() {
   a.click();
   URL.revokeObjectURL(a.href);
   setStatus('Delegated Agent zip 已生成', 'ok');
+}
+function openDelegatedInspector() {
+  const url = '/delegated-inspector' + (sessionId ? ('?session_id=' + encodeURIComponent(sessionId)) : '');
+  window.open(url, '_blank');
 }
 function openPreview() {
   document.getElementById('previewMask').classList.add('open');
