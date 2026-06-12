@@ -3156,7 +3156,8 @@ OPENAI_MODEL=your-model</code></pre>
               </select>
             </label>
             <button onclick="pmGuideNext()" class="primary">帮我推进下一步</button>
-            <button onclick="openStandaloneRuntimeInspector()">打开调试页</button>
+            <button onclick="openAgentIdeDelegatedInspector()" class="primary">真实 Agent 调试</button>
+            <button onclick="openStandaloneRuntimeInspector()">工程 Demo 调试</button>
             <button onclick="resetPmGuideFlow()">重新开始流程</button>
             <details class="cli-help-details">
               <summary>高级手动操作</summary>
@@ -3172,6 +3173,7 @@ OPENAI_MODEL=your-model</code></pre>
           <summary>使用说明 / 模式区别</summary>
           <div class="cli-command-meta">
             <span>第一次终端安全确认：右侧回车一次</span>
+            <span>真实 Agent 调试：打开 Delegated Inspector，像最终用户一样对话，并查看 open_claude 执行过程</span>
             <span>不满意结果：继续描述哪里不对</span>
             <span>日常补充/明确功能/复杂改造按需求复杂度选择</span>
           </div>
@@ -3194,7 +3196,8 @@ OPENAI_MODEL=your-model</code></pre>
             <button onclick="ensureCollabWorkspace()" class="primary">创建/选择工作区</button>
             <button onclick="openInteractiveCli()">查看右侧执行区</button>
             <button onclick="restartAgentDebugSession()">重启当前 Agent</button>
-            <button onclick="openStandaloneRuntimeInspector()">运行调试</button>
+            <button onclick="openAgentIdeDelegatedInspector()" class="primary">真实 Agent 调试</button>
+            <button onclick="openStandaloneRuntimeInspector()">工程 Demo 调试</button>
             <button onclick="saveCurrentWorkspaceVersion()">保存版本</button>
             <button onclick="downloadCurrentWorkspace()">下载工程</button>
             <button onclick="openDevStudioAdvanced()">高级工具</button>
@@ -4456,6 +4459,18 @@ function openDelegatedInspector() {
   const url = '/delegated-inspector' + (sessionId ? ('?session_id=' + encodeURIComponent(sessionId)) : '');
   window.open(url, '_blank');
 }
+function openAgentIdeDelegatedInspector() {
+  const params = new URLSearchParams();
+  if (sessionId) params.set('session_id', sessionId);
+  const workspaceId = currentWorkspaceId();
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  params.set('from', 'agent_ide');
+  params.set('embedded', '1');
+  window.open('/delegated-inspector?' + params.toString(), '_blank');
+  setPmGuideStage('debugged');
+  renderPmFlowGuide('debugged', '已打开真实 Agent 调试页：先生成并启动 Delegated Agent，再像最终用户一样连续对话。');
+  setStatus('已打开真实 Agent 调试页：用于查看 open_claude 执行过程、回复和产物', 'ok');
+}
 function openPreview() {
   document.getElementById('previewMask').classList.add('open');
   if (!previewMessage.value.trim()) previewMessage.value = localStorage.getItem('apd_preview_message') || '帮我生成一篇政务通知初稿';
@@ -5451,7 +5466,7 @@ function openDevStudioAdvanced(){openDevStudio();setTimeout(()=>{const advanced=
 async function ensureCollabWorkspace(){if(currentWorkspaceId()){await refreshCollabWorkspaceConsole();setStatus('已使用当前工作区：'+currentWorkspaceId(),'ok');return currentWorkspaceId();} if(typeof createDevWorkspace==='function'){await createDevWorkspace();await refreshCollabWorkspaceConsole();return currentWorkspaceId();} setStatus('请先创建工作区','warn');return '';}
 async function saveCurrentWorkspaceVersion(){const id=currentWorkspaceId();if(!id){setStatus('请先创建/选择工作区','warn');return;} await saveDevVersion(id); await refreshCollabWorkspaceConsole();}
 function downloadCurrentWorkspace(){const id=currentWorkspaceId();if(!id){setStatus('请先创建/选择工作区','warn');return;} downloadDevWorkspace('current',id);}
-function renderCollabWorkspaceMiniCard(workspace){const selected=workspace.workspace_id===currentWorkspaceId();const versions=workspace.versions||[];const name=workspace.name||workspace.project_name||workspace.workspace_id;const fileCount=String(((workspace.summary||{}).file_count)||0);return `<div class="collab-workspace-mini-card ${selected?'active':''}"><div class="row"><div><strong>${selected?'✅ ':''}${escapeHtml(name)}</strong><div class="small"><code>${escapeHtml(workspace.workspace_id||'')}</code> · ${escapeHtml(fileCount)} files · ${escapeHtml(workspace.current_version||'-')}</div></div><div class="quick-row"><button onclick="selectDevWorkspace('${workspace.workspace_id}');refreshCollabWorkspaceConsole()">选择</button><button onclick="openStandaloneRuntimeInspector()">调试</button><button onclick="downloadDevWorkspace('current','${workspace.workspace_id}')">下载</button></div></div>${versions.length?`<div class="small">最近版本：${escapeHtml((versions[versions.length-1]||{}).version_id||'')}</div>`:'<div class="small">暂无版本快照，建议稳定后保存版本。</div>'}</div>`;}
+function renderCollabWorkspaceMiniCard(workspace){const selected=workspace.workspace_id===currentWorkspaceId();const versions=workspace.versions||[];const name=workspace.name||workspace.project_name||workspace.workspace_id;const fileCount=String(((workspace.summary||{}).file_count)||0);return `<div class="collab-workspace-mini-card ${selected?'active':''}"><div class="row"><div><strong>${selected?'✅ ':''}${escapeHtml(name)}</strong><div class="small"><code>${escapeHtml(workspace.workspace_id||'')}</code> · ${escapeHtml(fileCount)} files · ${escapeHtml(workspace.current_version||'-')}</div></div><div class="quick-row"><button onclick="selectDevWorkspace('${workspace.workspace_id}');refreshCollabWorkspaceConsole()">选择</button><button onclick="selectDevWorkspace('${workspace.workspace_id}');openAgentIdeDelegatedInspector()">真实调试</button><button onclick="downloadDevWorkspace('current','${workspace.workspace_id}')">下载</button></div></div>${versions.length?`<div class="small">最近版本：${escapeHtml((versions[versions.length-1]||{}).version_id||'')}</div>`:'<div class="small">暂无版本快照，建议稳定后保存版本。</div>'}</div>`;}
 async function refreshCollabWorkspaceConsole(){const summary=document.getElementById('collabWorkspaceSummary');const list=document.getElementById('collabWorkspaceMiniList');if(!summary&&!list)return;if(summary)summary.textContent='正在读取工作区...';try{const url=sessionId?`/api/dev-studio/workspaces?session_id=${encodeURIComponent(sessionId)}`:'/api/dev-studio/workspaces';const res=await fetch(url);const data=await res.json();if(!res.ok)throw new Error(data.error||'读取失败');const workspaces=data.workspaces||[];if(workspaces.length&&!currentWorkspaceId()){currentDevWorkspaceId=workspaces[0].workspace_id||'';localStorage.setItem('apd_dev_workspace_id',currentDevWorkspaceId);}const selected=workspaces.find(w=>w.workspace_id===currentWorkspaceId())||workspaces[0];if(summary)summary.textContent=selected?`当前：${selected.name||selected.project_name||selected.workspace_id} · ${selected.workspace_id}`:'还没有工作区，点击“创建/选择工作区”。';if(list)list.innerHTML=workspaces.length?workspaces.slice(0,3).map(renderCollabWorkspaceMiniCard).join(''):'<div class="collab-workspace-mini-card"><strong>还没有工作区</strong><div class="small">点击“创建/选择工作区”，APD 会基于当前协议生成可持续开发的 Agent 工程。</div></div>';updateCliWorkspaceHint();}catch(err){if(summary)summary.textContent='工作区读取失败';if(list)list.innerHTML='<div class="collab-workspace-mini-card">读取失败：'+escapeHtml(err&&err.message?err.message:err)+'</div>';}}
 
 function openDevStudio() {
