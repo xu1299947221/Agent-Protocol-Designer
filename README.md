@@ -1,14 +1,32 @@
-# Agent Protocol Designer
+# APD - Agent Engineering Platform
 
-A conversational tool that turns messy business requirements into controllable Agent protocols.
+APD started as **Agent Protocol Designer**. Its current direction is **Agent Engineering Platform**: a toolchain for turning messy business requirements into runnable, debuggable, evolvable Agent projects.
 
-它不是普通 Agent Builder，而是一个 **Agent 架构前置设计器**：通过对话帮助开发者把业务场景拆成领域对象、用户意图、核心 operation、校验规则、Planner Prompt 和 Executor 骨架。
+APD 不是普通 Agent Builder、RAG 平台或 Workflow 拖拽器。它的核心目标是：
+
+```text
+把模糊业务需求，持续转化为可运行、可调试、可演进的 Agent 工程。
+```
+
+当前 APD 的完整链路是：
+
+```text
+需求对话
+  ↓
+APD 协议草案 JSON
+  ↓
+两条落地路线
+  ├── 委托型真实调试 / Delegated Agent：APD 协议 + Delegated Runtime + open_claude Engine
+  └── 自研工程开发 / Native Runtime：APD 协议 + 自研脚手架 + 工程开发台持续补 Runtime
+  ↓
+真实调试 / AI 修复 / 协议增量迁移 / 版本回滚 / 独立部署
+```
 
 ## Why
 
 自由 ReAct / Tool Calling 很灵活，但复杂业务里容易失控：模型会误选工具、误填参数、覆盖状态、提前提交或删除内容。
 
-本项目的目标是把：
+早期 APD 的目标是把：
 
 ```text
 自然语言业务需求
@@ -22,35 +40,59 @@ objects + operations + validators + planner schema + executor skeleton
 
 也就是让 LLM 负责语义理解，让程序负责确定性校验和状态执行。
 
-## Long-term Direction
+现在 APD 的目标进一步升级为：
 
-APD 后续方向不是普通 Agent Builder，而是逐步升级为 `Agent Harness Designer / Generator`。继续开发前请阅读：
+```text
+自然语言业务需求
+  → APD 协议
+  → Agent 工程脚手架
+  → 真实调试
+  → AI 诊断修复
+  → 协议 diff
+  → 工程增量迁移
+  → 可部署 Agent 服务
+```
+
+## Product Direction
+
+APD 后续方向不是普通 Agent Builder，而是面向定制 Agent 开发的 `Agent Engineering Platform`。
+
+继续开发前请阅读：
 
 - `docs/agent_harness_architecture_gaps.md`
 - `docs/agent_architecture_guide.md`
 - `docs/apd_next_tasks.md`
 
-核心新增方向包括：记忆策略（Memory Policy）、状态模型（State Model）、产物模型（Artifact Model）、工具注册（Tool Registry）、权限策略（Permission Policy）、失败恢复（Error Recovery）、评测用例（Eval Cases）和架构完整性检查器。
+当前主线：
 
-当前已新增 `architecture_check` 雏形：协议会自动计算架构完整度，并可导出 `architecture_check.md` / `architecture_check.json`；对话引导会根据最大架构缺口保持“一次只问一个问题”。
+```text
+1. 协议设计：通过对话生成 APD 协议草案 JSON。
+2. 工程生成：基于协议生成 Delegated Agent 或自研 Agent 工程。
+3. 真实调试：在 APD 页面里直接和生成 Agent 对话，观察白盒过程。
+4. AI 修复：把问题转成工程任务，交给 open_claude / Codex 类工具修复。
+5. 增量迁移：协议 v1 → v2 后生成 diff 和 migration task pack，迁移已有工程。
+6. Engine 化：把 open_claude 从 CLI 改造成可服务化 Agent Engine。
+7. 部署治理：支持多用户、Job、Workspace、Trace、Artifact、权限和版本回滚。
+```
+
+核心架构能力包括：记忆策略（Memory Policy）、状态模型（State Model）、产物模型（Artifact Model）、工具注册（Tool Registry）、权限策略（Permission Policy）、失败恢复（Error Recovery）、评测用例（Eval Cases）、架构完整性检查器、协议 diff、工程迁移任务包、真实调试台和 Engine Adapter。
 
 ## Features
 
-- 对话式采访业务场景
-- 自动生成 `objects` / `user_intents` / `operations`
-- 为每个 operation 生成风险等级、参数 schema、校验规则和失败策略
-- 增量支持 Dynamic Workflow：`nodes` / `edges` / `parallel_groups` / `human_review_points` / `failure_strategy` / `artifacts`
-- Dynamic Workflow 是可选增强：旧会话没有 `workflow` 字段也能继续打开，系统会自动补空结构
-- 导出：
-  - `protocol.json`
-  - `workflow.json`
-  - `workflow_plan.md`
-  - `planner_prompt.md`
-  - `executor_skeleton.py`
-  - `eval_cases.json`
+- 对话式收敛业务 Agent 需求
+- 自动生成 APD 协议草案 JSON：`objects` / `user_intents` / `operations` / `validators`
+- 生成架构增强层：`workflow` / `memory_policy` / `state_model` / `artifact_model` / `tool_registry` / `permission_policy`
+- 架构完整性检查：识别当前 Agent 缺少哪些 Harness 层
+- 两条工程落地路线：
+  - `Delegated Agent`：生成委托型 Agent 工程，调用 open_claude CLI / 未来 Engine API
+  - `Native Runtime`：生成自研 Agent 工程骨架，通过工程开发台持续开发 Runtime
+- 真实调试台：用户侧 Agent 对话、白盒过程、LLM 诊断、AI 修复任务
+- 工程开发台：工作区、ttyd/open_claude 终端、版本保存、下载工程
+- 增量演进设计：协议 diff、工程迁移任务包、已有工作区同步
+- 高级导出：`protocol.json` / `workflow.json` / `eval_cases.json` / `planner_prompt.md` / `executor_skeleton.py`
 - 支持 OpenAI-compatible API
 - 支持 Multi-Agent 协作雏形：角色分工、消息协议、任务交接、冲突处理和协同 Trace
-- 无数据库，原型阶段使用内存 session
+- 原型阶段主要使用文件存储和本地工作区
 
 ## Quick Start
 
@@ -74,12 +116,16 @@ http://localhost:8510
 
 ## Suggested Flow
 
-1. 描述你想做的 Agent 场景。
-2. 回答设计器追问的目标用户、典型用户话术、高风险操作。
-3. 让设计器 review operation 是否太泛、是否缺少 validators。
-4. 如果场景是多步骤、可变流程、并行处理或强校验任务，让设计器继续补 `workflow`。
-5. 导出 `protocol.json`、`workflow.json`、`workflow_plan.md` 和 `executor_skeleton.py`。
-6. 基于导出结果实现真正业务 Agent 或 Workflow Runtime。
+1. 在首页左侧描述你想做的 Agent 场景。
+2. APD 通过一次一个问题的方式收敛业务对象、操作、状态、权限、产物和评测。
+3. 首页生成 APD 协议草案 JSON。
+4. 协议基本清楚后，选择落地路线：
+   - 想快速看到真实效果：进入 `真实调试台 / Delegated Agent`
+   - 想长期完全自研可控：进入 `工程开发台 / Native Runtime`
+5. 在调试台里和 Agent 对话，观察白盒过程和诊断结果。
+6. 使用“让 AI 修这个问题”把调试问题转成工程任务。
+7. 新业务需求先回首页补协议，再生成协议 diff 和迁移任务，增量改造已有工程。
+8. 调试通过后保存版本、下载工程或独立部署。
 
 ## Example Input
 

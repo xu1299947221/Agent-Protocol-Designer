@@ -2422,7 +2422,7 @@ LOGIN_HTML = r"""
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>登录 - Agent Protocol Designer</title>
+  <title>登录 - APD Agent Engineering Platform</title>
   <style>
     body { margin:0; height:100vh; display:flex; align-items:center; justify-content:center; background:#0f172a; color:#e5e7eb; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
     .box { width:min(380px, 92vw); background:#111827; border:1px solid #263244; border-radius:16px; padding:26px; box-shadow:0 24px 80px rgba(0,0,0,.35); }
@@ -2435,8 +2435,8 @@ LOGIN_HTML = r"""
 </head>
 <body>
   <div class="box">
-    <h1>Agent Protocol Designer</h1>
-    <p>请输入用户名和密码后访问设计器。</p>
+    <h1>APD Agent Engineering Platform</h1>
+    <p>请输入用户名和密码后访问 Agent 工程平台。</p>
     <input id="username" placeholder="用户名" value="admin" />
     <input id="password" placeholder="密码" type="password" />
     <button onclick="login()">登录</button>
@@ -2461,7 +2461,7 @@ HTML = r"""
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Agent Protocol Designer</title>
+  <title>APD Agent Engineering Platform</title>
   <link rel="stylesheet" href="/static/vendor/xterm4/xterm.css?v=20260610c" />
   <style>
     :root { color-scheme: dark; --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --border:#263244; }
@@ -2666,6 +2666,41 @@ HTML = r"""
     .guide-body pre { display:block; margin:12px 0; padding:12px; border:1px solid var(--border); border-radius:10px; background:#020617; color:#e5e7eb; overflow:auto; white-space:pre; }
     .guide-body blockquote { margin:12px 0; padding:8px 12px; border-left:3px solid var(--accent); background:#0f1b2e; color:#cbd5e1; }
     .guide-body hr { border:0; border-top:1px solid var(--border); margin:20px 0; }
+    .apd-arch-map { max-width:1180px; margin:0 auto 22px; color:#dbeafe; }
+    .apd-arch-hero { border:1px solid #1f3b5d; border-radius:22px; padding:18px; background:linear-gradient(135deg, rgba(8,47,73,.82), rgba(15,23,42,.98)); box-shadow:0 20px 70px rgba(0,0,0,.22); }
+    .apd-arch-title-row { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:14px; }
+    .apd-arch-title-row h1 { margin:0; font-size:24px; letter-spacing:-.02em; color:#f8fafc; }
+    .apd-arch-title-row p { margin:6px 0 0; max-width:780px; color:#bfdbfe; font-size:14px; line-height:1.65; }
+    .apd-arch-badge { flex:0 0 auto; border:1px solid #38bdf8; color:#e0f2fe; background:rgba(14,165,233,.14); border-radius:999px; padding:6px 10px; font-size:12px; font-weight:800; }
+    .apd-arch-core { border:1px solid #2563eb; border-radius:18px; padding:16px; background:radial-gradient(circle at top left, rgba(59,130,246,.24), rgba(2,6,23,.74) 55%); }
+    .apd-arch-core strong { display:block; font-size:18px; color:#fff; }
+    .apd-arch-core span { display:block; color:#bfdbfe; margin-top:5px; font-size:13px; }
+    .apd-arch-flow { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; position:relative; }
+    .apd-arch-route { border:1px solid #334155; border-radius:20px; background:#0f172a; overflow:hidden; min-width:0; }
+    .apd-arch-route.delegated { border-color:#0891b2; }
+    .apd-arch-route.native { border-color:#7c3aed; }
+    .apd-arch-route-head { padding:14px 15px; border-bottom:1px solid rgba(148,163,184,.2); display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+    .apd-arch-route-head h2 { margin:0; padding:0; border:0; font-size:17px; color:#f8fafc; }
+    .apd-arch-route-head p { margin:5px 0 0; color:#cbd5e1; font-size:13px; line-height:1.55; }
+    .apd-arch-route-tag { border:1px solid #475569; border-radius:999px; padding:4px 8px; color:#dbeafe; background:#020617; font-size:12px; white-space:nowrap; }
+    .apd-arch-lane { padding:14px; display:grid; gap:10px; }
+    .apd-arch-step { display:grid; grid-template-columns:34px 1fr; gap:10px; align-items:start; border:1px solid #263244; border-radius:15px; padding:11px; background:rgba(2,6,23,.48); }
+    .apd-arch-step .num { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:999px; color:#020617; background:#67e8f9; font-weight:900; font-size:12px; }
+    .apd-arch-route.native .apd-arch-step .num { background:#c4b5fd; }
+    .apd-arch-step strong { display:block; color:#f8fafc; font-size:14px; }
+    .apd-arch-step span { display:block; margin-top:4px; color:#cbd5e1; font-size:12px; line-height:1.5; }
+    .apd-arch-arrow { text-align:center; color:#64748b; font-weight:900; line-height:1; margin:-4px 0; }
+    .apd-arch-details { margin-top:14px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .apd-arch-details details { border:1px solid #263244; border-radius:15px; background:#07111f; padding:0; overflow:hidden; }
+    .apd-arch-details summary { list-style:none; padding:11px 12px; cursor:pointer; color:#bae6fd; font-weight:900; display:flex; justify-content:space-between; gap:8px; }
+    .apd-arch-details summary::-webkit-details-marker { display:none; }
+    .apd-arch-details summary::after { content:'展开'; color:#94a3b8; font-size:12px; font-weight:700; }
+    .apd-arch-details details[open] summary::after { content:'收起'; }
+    .apd-arch-details div { padding:0 12px 12px; color:#cbd5e1; font-size:13px; line-height:1.6; }
+    .apd-arch-details ul { margin:7px 0 0 18px; padding:0; }
+    .apd-arch-note { margin-top:14px; border:1px solid #164e63; border-radius:16px; padding:12px; background:rgba(8,47,73,.36); color:#dbeafe; font-size:13px; line-height:1.65; }
+    .apd-arch-note strong { color:#67e8f9; }
+    @media (max-width: 980px) { .apd-arch-flow, .apd-arch-details { grid-template-columns:1fr; } .apd-arch-title-row { flex-direction:column; } }
     .case-body table { width:100%; border-collapse:collapse; margin:12px 0 18px; font-size:13px; }
     .case-body th, .case-body td { border:1px solid var(--border); padding:8px 10px; vertical-align:top; }
     .case-body th { background:#111827; color:#f8fafc; }
@@ -2790,8 +2825,8 @@ HTML = r"""
 <body>
 <header>
   <div>
-    <h1>Agent Protocol Designer</h1>
-    <div class="subtitle">面向小白的 Agent 场景开发向导：先设计，再预览，再生成。</div>
+    <h1>APD Agent Engineering Platform</h1>
+    <div class="subtitle">面向定制 Agent 的协议设计、工程生成、真实调试和增量迁移平台。</div>
   </div>
   <div class="top-actions">
     <button onclick="focusDesignerInput()" class="primary step-btn"><span class="step-index">1</span>设计 Agent</button>
@@ -3064,7 +3099,7 @@ OPENAI_MODEL=your-model</code></pre>
   </section>
 </main>
 <div class="drawer-mask" id="guideMask" onclick="closeGuide(event)">
-  <aside class="drawer" onclick="event.stopPropagation()">
+  <aside class="drawer wide-drawer" onclick="event.stopPropagation()">
     <div class="drawer-head">
       <h2>Agent 架构笔记</h2>
       <div>
@@ -3072,7 +3107,10 @@ OPENAI_MODEL=your-model</code></pre>
         <button onclick="closeGuide()">关闭</button>
       </div>
     </div>
-    <div class="guide-body" id="guide">加载中...</div>
+    <div class="guide-body">
+      <div id="apdArchMap"></div>
+      <div id="guide">加载中...</div>
+    </div>
   </aside>
 </div>
 <div class="drawer-mask" id="workflowMask" onclick="closeDynamicWorkflow(event)">
@@ -4090,6 +4128,7 @@ function fallbackDevelopmentAdvice(protocolValue) {
 }
 function openGuide() {
   document.getElementById('guideMask').classList.add('open');
+  renderApdArchitectureMap();
   loadGuide();
 }
 function closeGuide(event) {
@@ -4153,6 +4192,79 @@ async function loadGuide() {
   } catch (err) {
     document.getElementById('guide').textContent = '加载笔记失败：' + err;
   }
+}
+function renderApdArchitectureMap() {
+  const target = document.getElementById('apdArchMap');
+  if (!target) return;
+  target.innerHTML = `
+    <section class="apd-arch-map" aria-label="APD 整体系统架构">
+      <div class="apd-arch-hero">
+        <div class="apd-arch-title-row">
+          <div>
+            <h1>APD 系统架构：先设计协议，再选择落地路线</h1>
+            <p>首页左侧对话的核心产物是 APD 协议草案 JSON。协议收敛后，系统进入两条平级路线：一条借 open_claude 快速真实调试，一条生成自研工程骨架并持续开发 Runtime。</p>
+          </div>
+          <span class="apd-arch-badge">可维护卡片图</span>
+        </div>
+        <div class="apd-arch-core">
+          <strong>首页左侧对话 → APD 协议草案 JSON</strong>
+          <span>协议描述业务目标、对象、操作、校验、状态、记忆、产物和评测。它是业务语义契约，不是完整代码工程。</span>
+        </div>
+        <div class="apd-arch-flow">
+          <article class="apd-arch-route delegated">
+            <div class="apd-arch-route-head">
+              <div>
+                <h2>路线 A：委托型真实调试</h2>
+                <p>适合先看真实效果，借用 open_claude 的成熟执行能力快速跑起来。</p>
+              </div>
+              <span class="apd-arch-route-tag">Delegated Agent</span>
+            </div>
+            <div class="apd-arch-lane">
+              <div class="apd-arch-step"><span class="num">1</span><div><strong>Delegated Agent 脚手架</strong><span>由当前协议生成 FastAPI、Job、Task Pack、Trace、Artifact 和调试页面。</span></div></div>
+              <div class="apd-arch-arrow">↓</div>
+              <div class="apd-arch-step"><span class="num">2</span><div><strong>Delegated Runtime</strong><span>负责会话、任务、工作区、运行状态、产物收集和诊断展示。</span></div></div>
+              <div class="apd-arch-arrow">↓</div>
+              <div class="apd-arch-step"><span class="num">3</span><div><strong>open_claude CLI / Engine</strong><span>当前调用 CLI，未来改为 Engine API，负责真正的多步执行。</span></div></div>
+              <div class="apd-arch-arrow">↓</div>
+              <div class="apd-arch-step"><span class="num">4</span><div><strong>快速可运行 Agent</strong><span>通过真实调试台对话验证效果，再按问题类型做场景修复、Runtime 回灌或 Engine 改造。</span></div></div>
+            </div>
+          </article>
+          <article class="apd-arch-route native">
+            <div class="apd-arch-route-head">
+              <div>
+                <h2>路线 B：自研工程开发</h2>
+                <p>适合长期可控，把自研 Runtime 从工程骨架逐步养成熟。</p>
+              </div>
+              <span class="apd-arch-route-tag">Native Runtime</span>
+            </div>
+            <div class="apd-arch-lane">
+              <div class="apd-arch-step"><span class="num">1</span><div><strong>自研 Agent 脚手架</strong><span>由当前协议生成自研工程骨架，保留协议、状态、工具和运行链路位置。</span></div></div>
+              <div class="apd-arch-arrow">↓</div>
+              <div class="apd-arch-step"><span class="num">2</span><div><strong>工程开发台 AI 编码</strong><span>通过 open_claude / Codex 类工具持续补代码、调试、验收和版本化。</span></div></div>
+              <div class="apd-arch-arrow">↓</div>
+              <div class="apd-arch-step"><span class="num">3</span><div><strong>自研 Runtime 成熟化</strong><span>逐步补齐 Planner、Validator、Executor、Tools、Memory、Trace 和 Runtime Loop。</span></div></div>
+              <div class="apd-arch-arrow">↓</div>
+              <div class="apd-arch-step"><span class="num">4</span><div><strong>长期可控 Agent</strong><span>执行能力取决于自研 Runtime 完成度，优势是边界和代码完全可控。</span></div></div>
+            </div>
+          </article>
+        </div>
+        <div class="apd-arch-details">
+          <details open>
+            <summary>协议导出的位置</summary>
+            <div>协议导出仍然保留，但应降级为高级能力。它用于调试、版本对比、给工程 AI 读取上下文，以及迁移到其他 Runtime。<ul><li>主流程：选择落地路线</li><li>高级区：下载 protocol.json、workflow.json、eval_cases.json</li></ul></div>
+          </details>
+          <details>
+            <summary>AI 修复改哪里</summary>
+            <div>真实调试台和工程开发台默认修当前生成的业务 Agent 工程。只有通用 Runtime 问题才回灌模板，Engine 能力问题才进入 open_claude 改造。</div>
+          </details>
+          <details>
+            <summary>两条路线怎么选</summary>
+            <div>想先验证业务效果，选委托型真实调试。想长期沉淀完全自研的业务 Agent，选自研工程开发。两条路线共享同一份 APD 协议，但执行模型不同。</div>
+          </details>
+        </div>
+        <div class="apd-arch-note"><strong>一句话：</strong>APD 不是直接等于 Agent。APD 先设计协议，再把协议送进两条不同工程路线：一条借 open_claude 快速落地，一条自研 Runtime 长期沉淀。</div>
+      </div>
+    </section>`;
 }
 function openDynamicWorkflow() {
   document.getElementById('workflowMask').classList.add('open');
@@ -4250,14 +4362,14 @@ function renderDynamicWorkflow() {
     <h2>6. APD 应该怎么升级</h2>
     <div class="workflow-card">
       <p>APD 原来负责设计“能力协议”，升级后要继续设计“能力编排”。也就是：先知道有哪些原子能力，再知道这些能力如何组成一次可靠的任务系统。</p>
-      <pre><code>APD v1：Agent Protocol Designer
+      <pre><code>APD v1：Agent Protocol Designer（协议设计阶段）
   - objects
   - operations
   - validators
   - planner schema
   - executor skeleton
 
-APD v2：Agent + Dynamic Workflow Designer
+APD v2：Agent Engineering Platform（工程落地阶段）
   - protocol
   - workflow graph
   - agent nodes

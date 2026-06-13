@@ -778,3 +778,717 @@ APD 以后不是只问“这个 Agent 能做哪些操作”，还要检查“这
 - 成本耗时预算（Cost/Latency Budget）
 
 尤其要注意：之前 APD 有上下文、历史、状态和 Trace，但没有把“记忆”作为一等架构层。后续应补 `memory_policy`，并明确记忆如何读取、写入、校验、删除、进入 Context Pack。
+
+---
+
+## 18. APD、业务 Agent 与 open_claude Engine 的关系
+
+本轮讨论补充了一个关键认知：
+
+```text
+APD 设计出来的不是最终可运行 Agent 本体，而是业务 Agent 的语义边界、能力协议和治理规则。
+```
+
+更准确的分层是：
+
+```text
+APD 协议层
+  ↓
+业务 Agent 服务层
+  ↓
+Agent Runtime / Engine 执行层
+```
+
+### 18.1 APD 协议层负责什么
+
+APD 负责把模糊需求收敛成明确协议：
+
+- 业务目标
+- 领域对象
+- 用户意图
+- 可执行操作
+- 状态边界
+- 权限规则
+- 风险操作
+- 人工确认点
+- 产物要求
+- 验收标准
+- 评测样本
+
+它本质上是：
+
+```text
+业务语义层 / 场景边界层 / Agent 治理层
+```
+
+不是直接等同于代码，也不等同于一个已经成熟的 Runtime。
+
+### 18.2 业务 Agent 服务层负责什么
+
+业务 Agent 服务层是把某个 APD 协议真正部署成可访问服务的中间层。
+
+它负责：
+
+- 用户登录和会话
+- 任务入口 API
+- 业务参数校验
+- Task Pack 组装
+- 工作区创建
+- Job 状态管理
+- 事件流转发
+- 产物归档
+- 版本记录
+- 运行诊断
+
+它不一定自己完成全部智能执行，而是可以调用底层 Engine。
+
+### 18.3 open_claude Engine 负责什么
+
+open_claude 可以理解为：
+
+```text
+通用工程类 Agent 执行引擎
+```
+
+它具备：
+
+- LLM 推理
+- 多步执行循环
+- 文件读取和修改
+- 命令执行
+- 观察结果处理
+- 错误修复
+- 工程上下文管理
+- 终端交互能力
+
+因此，open_claude 更像一个底层 Agent Engine，而不是普通模型接口。
+
+类比 Java 开发：
+
+```text
+APD 协议 ≈ 业务配置 / 领域规约 / 契约
+业务 Agent 服务 ≈ 具体业务应用
+open_claude Engine ≈ Spring Boot + 工作流执行器 + 工具系统 + LLM 大脑
+```
+
+这个类比不是说 open_claude 等于 Spring Boot，而是说它可以作为多个业务 Agent 复用的底层执行框架。
+
+### 18.4 两条落地路线的真实区别
+
+APD 当前有两条平级路线：
+
+```text
+路线 A：委托型真实调试 / Delegated Agent
+APD 协议 → Task Pack → open_claude Engine → 结果 / 产物 / Trace
+
+路线 B：自研工程开发 / 自研 Runtime
+APD 协议 → 生成工程骨架 → 自己实现 Planner / Validator / Executor / Tools / Runtime
+```
+
+这两条路线共享 APD 协议，但执行实现不同。
+
+路线 A 短期效果更强，因为 open_claude 已经有成熟的工程 Agent 执行能力。
+
+路线 B 长期更可控，因为核心 Runtime 是自己开发和维护的。
+
+### 18.5 APD 协议能不能通用
+
+APD 协议可以在“业务语义层”通用：
+
+```text
+这个 Agent 要做什么
+哪些事情能做
+哪些事情不能做
+什么情况下要追问
+什么情况下要人工确认
+最终产物怎么算合格
+```
+
+但协议不能自动保证所有 Runtime 都有同样执行效果。
+
+原因是 Runtime 还需要具备：
+
+- 工具系统
+- 多步循环
+- 文件操作能力
+- 命令执行能力
+- 上下文管理能力
+- 错误恢复能力
+- 并发隔离能力
+- 事件追踪能力
+
+所以正确理解是：
+
+```text
+APD 让业务边界通用。
+Runtime 决定执行能力上限。
+```
+
+### 18.6 open_claude 作为每个业务 Agent 的执行引擎
+
+如果把 open_claude 服务化，每个业务 Agent 都可以这样运行：
+
+```text
+用户请求
+  ↓
+业务 Agent API
+  ↓
+读取 APD 协议
+  ↓
+生成 Task Pack
+  ↓
+调用 open_claude Engine
+  ↓
+订阅结构化事件
+  ↓
+返回 Agent 回复 / 产物 / Trace
+```
+
+这种设计下，open_claude 不是 APD 平台的一部分，而是每个业务 Agent 的底层依赖。
+
+也就是说：
+
+```text
+APD 负责生成和治理业务 Agent。
+open_claude Engine 负责帮助业务 Agent 执行复杂任务。
+```
+
+### 18.7 为什么需要把 open_claude 从 CLI 改成服务化 Engine
+
+CLI 适合一个人、一个终端、一个任务。
+
+业务 Agent 服务需要支持：
+
+- 多用户
+- 多会话
+- 多任务
+- 任务排队
+- 任务取消
+- 超时控制
+- 工作区隔离
+- 事件流输出
+- 产物归档
+- 权限控制
+
+因此不能长期依赖一个 CLI 进程和终端文本解析。
+
+目标应该是：
+
+```text
+open_claude CLI
+  ↓
+open_claude Core Engine
+  ↓
+open_claude Engine Server
+```
+
+CLI 保留，但 CLI 和 Server 共用同一个 Core Engine。
+
+### 18.8 对后续 APD 开发的要求
+
+后续 APD 如果继续走委托型 Agent 路线，需要补齐：
+
+- Task Pack 标准
+- Engine Adapter 标准
+- Job 状态模型
+- 事件协议
+- Artifact 契约
+- 权限策略
+- 工作区隔离
+- 多用户并发模型
+- 失败恢复与诊断
+
+这部分不应混在普通协议设计里，而应作为：
+
+```text
+Agent Engine 接入层 / Delegated Runtime 层
+```
+
+单独设计和演进。
+
+---
+
+## 19. 真实调试台 AI 修复的分类原则
+
+真实调试台里的“让 AI 修这个问题”，默认修复的是当前生成出来的业务 Agent 工程，而不是 APD 平台源码，也不是通用模板。
+
+当前链路是：
+
+```text
+APD 协议
+  ↓
+生成 Delegated Agent 工程
+  ↓
+真实调试台运行这个工程
+  ↓
+发现问题
+  ↓
+AI 诊断与修复
+  ↓
+修改当前生成工程
+  ↓
+重启当前 Agent 验证
+```
+
+关键原则：
+
+```text
+场景修复默认局部化。
+通用修复必须显式评审后再回灌。
+```
+
+### 19.1 三类修复
+
+| 修复类型 | 典型问题 | 应修改位置 | 是否回灌 |
+|---|---|---|---|
+| 场景业务修复 | 投标 Agent 评分办法解析不准、写作 Agent 品牌语气不准、某个 Agent 的 Task Pack 不够细 | 当前生成的业务 Agent 工程 | 默认不回灌 |
+| Runtime 通用修复 | Job 一直 queued、result.json 解析失败、cancel 不生效、artifact 列表不完整、状态流转错误 | Delegated Runtime SDK / APD 生成模板 | 需要评审后回灌 |
+| Engine 能力修复 | open_claude 多用户串上下文、CLI 输出不可结构化、权限控制太粗、无法稳定事件流 | open_claude Engine | 单独进入 Engine 改造 |
+
+### 19.2 为什么不能默认回灌
+
+真实调试台中大量修复是场景相关的。
+
+例如：
+
+```text
+投标 Agent 需要更重视评分办法。
+写作 Agent 需要保持品牌语气。
+知识图谱 Agent 需要提高证据绑定权重。
+```
+
+这些改动如果直接进入通用模板，会污染其他 Agent：
+
+```text
+一个业务场景的偏好，变成所有 Agent 的默认行为。
+```
+
+所以默认策略必须是：
+
+```text
+当前 Agent 修当前 Agent。
+只有被明确识别为通用 Runtime 缺陷，才允许进入模板回灌流程。
+```
+
+### 19.3 后续产品能力要求
+
+真实调试台后续应增加“修复归类”能力。
+
+AI 诊断时不应只给修复建议，还要输出：
+
+```json
+{
+  "problem_type": "scenario|runtime|engine",
+  "should_patch_current_agent": true,
+  "should_backport_template": false,
+  "should_create_engine_task": false,
+  "reason": "这是当前投标 Agent 的评分办法解析策略问题，不应污染通用模板。"
+}
+```
+
+当 `problem_type=runtime` 时，页面才应该提示：
+
+```text
+这可能是通用 Runtime 问题，是否生成“回灌 APD 模板”的任务包？
+```
+
+当 `problem_type=engine` 时，页面应该提示：
+
+```text
+这可能是 open_claude Engine 能力问题，是否生成 Engine 改造任务包？
+```
+
+这样可以避免把业务定制、Runtime 缺陷、Engine 能力缺口混在一起。
+
+---
+
+## 20. 首页协议产物与两套脚手架路线
+
+本轮再次澄清 APD 当前系统结构。
+
+### 20.1 首页左侧对话产物
+
+首页左侧对话的核心产物是：
+
+```text
+APD 协议草案 JSON
+```
+
+它不是完整代码工程，也不是可直接运行的 Agent。
+
+协议草案 JSON 主要包含：
+
+```text
+objects
+operations
+validators
+workflow
+memory_policy
+state_model
+artifacts
+eval_cases
+architecture_check
+```
+
+页面右侧可以基于协议导出辅助产物，例如：
+
+```text
+planner_prompt.md
+executor_skeleton.py
+workflow_plan.md
+eval_cases.json
+```
+
+但这些属于辅助导出，不等于首页左侧对话直接产出完整工程代码。
+
+准确理解：
+
+```text
+首页左侧对话 = 通过对话生成和迭代协议草案 JSON。
+```
+
+### 20.2 协议完成后进入两条落地路线
+
+当协议草案通过对话收敛到可用状态后，APD 应引导用户选择两条平级落地路线：
+
+```text
+路线 1：委托型真实调试 / Delegated Agent
+路线 2：自研工程开发 / 自研 Runtime
+```
+
+两条路线共享同一份 APD 协议草案，但使用不同脚手架和不同执行模型。
+
+### 20.3 路线 1：Delegated Agent 脚手架
+
+委托型真实调试路线使用 Delegated Agent 模板脚手架。
+
+当前模板主要在：
+
+```text
+protocol_designer/delegated_generator.py
+```
+
+它会生成：
+
+```text
+FastAPI 服务
+Job 管理
+Task Pack Builder
+Workspace Manager
+Trace Store
+Artifact Store
+openclaude_runner.py
+runner_worker.py
+前端调试页
+runner/open_claude/
+```
+
+这条路线的执行核心是：
+
+```text
+open_claude CLI / 未来 open_claude Engine API
+```
+
+所以可以理解为：
+
+```text
+APD 协议 JSON
+  ↓
+Delegated Agent 模板脚手架
+  ↓
+Delegated Agent 工程
+  ↓
+open_claude 执行引擎
+```
+
+### 20.4 路线 2：自研工程开发脚手架
+
+自研工程开发路线使用另一套工程脚手架。
+
+当前相关代码主要在：
+
+```text
+protocol_designer/scaffold_generator.py
+protocol_designer/dev_studio.py
+```
+
+它更偏向基于 APD 协议生成一个自研 Agent 工程骨架，然后通过 Agent IDE / 工程开发台继续开发。
+
+这条路线理论上需要自己实现：
+
+```text
+Planner
+Validator
+Executor
+Tool Registry
+State
+Memory
+Trace
+Runtime Loop
+```
+
+所以可以理解为：
+
+```text
+APD 协议 JSON
+  ↓
+自研 Agent 模板脚手架
+  ↓
+自研 Agent 工程
+  ↓
+自己逐步补齐 Runtime 能力
+```
+
+### 20.5 两条路线的本质区别
+
+| 维度 | 委托型真实调试 | 自研工程开发 |
+|---|---|---|
+| 脚手架 | Delegated Agent 模板 | 自研 Agent 工程模板 |
+| 执行核心 | open_claude CLI / Engine | 自己实现 Runtime |
+| 短期效果 | 更强 | 取决于实现完成度 |
+| 可控性 | 依赖 open_claude 能力边界 | 完全自研可控 |
+| 适合阶段 | 快速验证业务效果 | 长期沉淀专用 Agent |
+
+最终准确公式：
+
+```text
+首页协议 JSON
+  ↓
+路线 1：Delegated Agent 模板 + open_claude Runtime
+  ↓
+生成委托型 Agent 工程
+
+首页协议 JSON
+  ↓
+路线 2：自研 Agent 模板 + 自己实现 Runtime
+  ↓
+生成自研 Agent 工程
+```
+
+---
+
+## 21. 导出产物区的新定位
+
+随着 APD 从早期“协议导出工具”演进到“Agent 工程落地平台”，页面右侧的导出产物区需要重新定义主次关系。
+
+### 21.1 早期 APD 的导出定位
+
+早期 APD 的核心能力是：
+
+```text
+通过对话生成协议草案
+  ↓
+导出 protocol.json / prompt / skeleton
+  ↓
+开发者拿去手工开发
+```
+
+所以当时页面右侧以“导出协议产物”为主是合理的。
+
+### 21.2 当前 APD 的导出定位
+
+当前 APD 已经具备两条 Agent 工程落地路线：
+
+```text
+路线 1：委托型真实调试 / Delegated Agent
+路线 2：自研工程开发 / 自研 Runtime
+```
+
+因此，页面右侧不应继续把“下载协议草案”放在主位。
+
+更合理的主路径是：
+
+```text
+协议完成后
+  ↓
+选择落地路线
+  ├── 打开委托型真实调试
+  ├── 生成 Delegated Agent 工程
+  ├── 打开自研工程开发台
+  └── 生成自研 Agent 工程
+```
+
+### 21.3 协议导出仍然有价值
+
+协议导出不能删除，只是应该降级到高级能力。
+
+它仍然用于：
+
+- 两条工程路线的源数据
+- 调试问题时的依据
+- 给 Claude Code / Codex 读取上下文
+- 版本对比和回滚
+- 迁移到其他 Runtime 或 Engine 的契约
+
+所以准确定位是：
+
+```text
+协议导出 = 底层源文件 / 调试资料 / 高级开发者产物
+```
+
+而不是主流程入口。
+
+### 21.4 建议 UI 分组
+
+页面右侧建议整理成三组：
+
+```text
+1. 下一步落地
+- 打开委托型真实调试
+- 生成 Delegated Agent 工程 zip
+- 打开自研工程开发台
+- 生成自研 Agent 工程 zip
+
+2. 协议源文件
+- 查看 protocol.json
+- 下载 protocol.json
+- 下载 workflow.json
+- 下载 eval_cases.json
+
+3. 开发者辅助
+- planner_prompt.md
+- executor_skeleton.py
+- architecture_check.md
+- task_pack.md
+```
+
+这样可以保证新用户先看到“怎么落地 Agent”，高级用户仍然能拿到底层协议文件。
+
+---
+
+## 22. 自研 Runtime 路线的成长模型
+
+自研 Runtime 路线不是不能生成完整 Agent，而是刚生成时更像工程骨架，需要通过工程开发台持续开发成熟。
+
+### 22.1 初始产物
+
+自研路线初始产物是：
+
+```text
+自研 Agent 工程骨架
+```
+
+它可以包含：
+
+```text
+Planner
+Validator
+Executor
+Tool Registry
+State
+Memory
+Trace
+Runtime Loop
+```
+
+但这些能力在初始阶段可能只是骨架或基础实现，不等同于成熟完整 Runtime。
+
+### 22.2 成熟路径
+
+自研路线的成长过程是：
+
+```text
+APD 协议 JSON
+  ↓
+生成自研 Agent 工程骨架
+  ↓
+工程开发台让 AI 修改代码
+  ↓
+补 Planner / Validator / Executor / Tools / Memory / Trace
+  ↓
+不断调试、评测、修复
+  ↓
+形成成熟完整 Agent
+```
+
+也就是说，自研路线是可成长路线。
+
+### 22.3 与 Delegated 路线的区别
+
+| 路线 | 刚生成时 | 成熟方式 |
+|---|---|---|
+| Delegated Agent | 已借用 open_claude，短期执行力更强 | 主要调协议、Task Pack、业务约束、Runner 适配 |
+| 自研 Runtime | 初始是工程骨架，执行力取决于实现完成度 | 通过工程开发台持续补 Runtime 和业务代码 |
+
+### 22.4 页面文案应避免误导
+
+不应写成：
+
+```text
+一键生成成熟完整 Agent
+```
+
+更准确的文案是：
+
+```text
+生成可运行 Delegated Agent。
+生成自研 Agent 工程骨架，并在工程开发台持续开发成完整 Agent。
+```
+
+核心理解：
+
+```text
+Delegated 路线 = 先借成熟引擎跑起来。
+自研路线 = 先生成骨架，再把 Runtime 养成熟。
+```
+
+---
+
+## 23. APD 架构图展示偏好
+
+后续在 APD 页面或文档中展示系统架构时，不建议默认使用 Mermaid 流程图作为主要展示方式。
+
+原因：
+
+```text
+Mermaid 适合开发者快速表达逻辑，但视觉观感偏工程化，不够直观。
+AI 生图视觉可能更好，但文字容易错，后续不方便维护。
+```
+
+更推荐的展示形式：
+
+```text
+HTML / SVG 卡片式架构图
+PPT 风格分层图
+表格 + 简洁文本图
+```
+
+推荐风格示例：
+
+```text
+┌──────────────────────────────────────────────┐
+│                  APD 平台                     │
+│        通过对话生成 Agent 协议草案 JSON        │
+└──────────────────────┬───────────────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │                             │
+┌───────▼────────┐            ┌───────▼────────┐
+│ 路线 A          │            │ 路线 B          │
+│ 委托型真实调试   │            │ 自研工程开发     │
+└───────┬────────┘            └───────┬────────┘
+        │                             │
+        ▼                             ▼
+Delegated Agent 脚手架          自研 Agent 脚手架
+        │                             │
+        ▼                             ▼
+Delegated Runtime              工程开发台 AI 编码
+        │                             │
+        ▼                             ▼
+open_claude Engine             自研 Runtime 成熟化
+        │                             │
+        ▼                             ▼
+快速可运行 Agent                长期可控 Agent
+```
+
+产品页面建议：
+
+```text
+使用 HTML/SVG 卡片式架构图，保证中文文字准确、可维护、可点击展开说明。
+```
+
+会议汇报建议：
+
+```text
+使用 PPT 风格分层图，突出 APD 协议层、两条落地路线、Runtime 差异和最终产物。
+```
