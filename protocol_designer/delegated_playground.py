@@ -57,6 +57,44 @@ class DelegatedPlaygroundProcess:
         }
 
 
+class _ExternalProcess:
+    def __init__(self, port: int) -> None:
+        self.pid = _pid_listening_on_port(port)
+        self.stdout = None
+        self._port = port
+
+    def poll(self) -> int | None:
+        if self.pid:
+            try:
+                os.kill(self.pid, 0)
+                return None
+            except OSError:
+                return 1
+        return None if _is_http_ok(f"http://127.0.0.1:{self._port}/health") else 1
+
+    def terminate(self) -> None:
+        if self.pid:
+            try:
+                os.kill(self.pid, 15)
+            except OSError:
+                pass
+        return None
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = time.time() + float(timeout or 0)
+        while self.poll() is None and time.time() < deadline:
+            time.sleep(0.1)
+        return 0
+
+    def kill(self) -> None:
+        if self.pid:
+            try:
+                os.kill(self.pid, 9)
+            except OSError:
+                pass
+        return None
+
+
 class DelegatedPlaygroundManager:
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = root_dir
@@ -65,6 +103,7 @@ class DelegatedPlaygroundManager:
 
     def list_items(self) -> list[dict[str, Any]]:
         self._drop_stopped()
+        self._load_disk_summaries()
         return [item.to_summary() for item in sorted(self._items.values(), key=lambda value: value.created_at, reverse=True)]
 
     def get(self, delegated_id: str) -> DelegatedPlaygroundProcess:
@@ -108,7 +147,12 @@ class DelegatedPlaygroundManager:
         project_root = root_parent / project_name
         backend_root = project_root / "backend"
         port = _find_free_port()
-        process = self._spawn_process(project_root, backend_root, port, fake_runner=fake_runner)
+        if port > 0 and _is_http_ok(f"http://127.0.0.1:{port}/health"):
+            process = _ExternalProcess(port)
+        else:
+            if port <= 0:
+                port = _find_free_port()
+            process = self._spawn_process(project_root, backend_root, port, fake_runner=fake_runner)
         item = DelegatedPlaygroundProcess(
             delegated_id=delegated_id,
             session_id=session_id,
@@ -121,8 +165,10 @@ class DelegatedPlaygroundManager:
             last_result={"manifest": manifest},
         )
         self._items[delegated_id] = item
+        self._save_state(item)
         wait_result = _wait_http(f"{item.base_url}/health", timeout=8)
         item.last_result = {"startup": wait_result, "manifest": manifest}
+        self._save_state(item)
         if not wait_result.get("ok"):
             output = self.read_logs(delegated_id, limit=120)
             self.stop(delegated_id)
@@ -141,7 +187,7 @@ class DelegatedPlaygroundManager:
         return item.to_summary()
 
     def restart(self, delegated_id: str) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         if item.process.poll() is None:
             item.process.terminate()
             try:
@@ -152,25 +198,32 @@ class DelegatedPlaygroundManager:
         item.process = self._spawn_process(item.project_root, item.backend_root, item.port, fake_runner=item.fake_runner)
         wait_result = _wait_http(f"{item.base_url}/health", timeout=8)
         item.last_result = {"restart": wait_result, "restarted_at": time.time()}
+        self._save_state(item)
         if not wait_result.get("ok"):
             output = self.read_logs(delegated_id, limit=120)
             raise RuntimeError(f"Delegated Agent 重启失败：{wait_result.get('error') or 'health check failed'}\n{output}")
         return item.to_summary()
 
+    def get_or_restore(self, delegated_id: str) -> DelegatedPlaygroundProcess:
+        item = self._items.get(delegated_id)
+        if item:
+            return item
+        return self._restore_from_disk(delegated_id)
+
     def create_job(self, delegated_id: str, message: str) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         result = _post_json(f"{item.base_url}/api/jobs", {"message": message}, timeout=15)
         item.last_result = {"create_job": result}
         return result
 
     def get_job(self, delegated_id: str, job_id: str) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         result = _get_json(f"{item.base_url}/api/jobs/{job_id}", timeout=12)
         item.last_result = {"job": result}
         return result
 
     def get_job_snapshot(self, delegated_id: str, job_id: str, *, event_limit: int = 160, log_limit: int = 12000) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         job_root = item.project_root / "data" / "jobs" / job_id
         job_path = job_root / "job.json"
         if not job_path.exists():
@@ -200,31 +253,31 @@ class DelegatedPlaygroundManager:
         }
 
     def list_jobs(self, delegated_id: str) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         result = _get_json(f"{item.base_url}/api/jobs", timeout=12)
         item.last_result = {"jobs": result}
         return result
 
     def events(self, delegated_id: str, job_id: str) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         return _get_json(f"{item.base_url}/api/jobs/{job_id}/events", timeout=12)
 
     def config(self, delegated_id: str) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         return _get_json(f"{item.base_url}/api/config", timeout=12)
 
     def artifacts(self, delegated_id: str, job_id: str) -> dict[str, Any]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         return _get_json(f"{item.base_url}/api/jobs/{job_id}/artifacts", timeout=12)
 
     def job_logs(self, delegated_id: str, job_id: str) -> dict[str, str]:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         stdout = _get_text(f"{item.base_url}/api/jobs/{job_id}/logs/stdout", timeout=12)
         stderr = _get_text(f"{item.base_url}/api/jobs/{job_id}/logs/stderr", timeout=12)
         return {"stdout": stdout, "stderr": stderr}
 
     def artifact_text(self, delegated_id: str, job_id: str, name: str) -> str:
-        item = self.get(delegated_id)
+        item = self.get_or_restore(delegated_id)
         return _get_text(f"{item.base_url}/api/jobs/{job_id}/artifacts/{name}", timeout=12)
 
     def _spawn_process(self, project_root: Path, backend_root: Path, port: int, *, fake_runner: bool) -> subprocess.Popen:
@@ -259,16 +312,143 @@ class DelegatedPlaygroundManager:
                     break
         return "\n".join(lines[-limit:])
 
+    def _save_state(self, item: DelegatedPlaygroundProcess) -> None:
+        state_path = self.root_dir / item.delegated_id / "playground_state.json"
+        old_state = _read_json(state_path)
+        project_root = str(item.project_root)
+        backend_root = str(item.backend_root)
+        if project_root in {"", "."}:
+            project_root = str(old_state.get("project_root") or "")
+        if backend_root in {"", "."}:
+            backend_root = str(old_state.get("backend_root") or "")
+        payload = {
+            "delegated_id": item.delegated_id,
+            "session_id": item.session_id,
+            "project_name": item.project_name,
+            "project_root": project_root,
+            "backend_root": backend_root,
+            "port": item.port,
+            "fake_runner": item.fake_runner,
+            "created_at": item.created_at,
+            "last_result": item.last_result,
+        }
+        state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _restore_from_disk(self, delegated_id: str) -> DelegatedPlaygroundProcess:
+        root_parent = self.root_dir / delegated_id
+        if not root_parent.exists() or not root_parent.is_dir():
+            raise KeyError(delegated_id)
+        state = _read_json(root_parent / "playground_state.json")
+        project_root_text = str(state.get("project_root") or "").strip()
+        project_root = Path(project_root_text) if project_root_text else Path()
+        if not project_root_text or project_root == Path(".") or not (project_root / "backend" / "app" / "main.py").exists():
+            project_root = self._guess_project_root(root_parent)
+        backend_root_text = str(state.get("backend_root") or "").strip()
+        backend_root = Path(backend_root_text) if backend_root_text else Path()
+        if not backend_root_text or backend_root == Path(".") or not (backend_root / "app" / "main.py").exists():
+            backend_root = project_root / "backend"
+        if not backend_root.exists():
+            raise KeyError(delegated_id)
+        port = int(state.get("port") or _find_free_port())
+        fake_runner = bool(state.get("fake_runner", True))
+        process = self._spawn_process(project_root, backend_root, port, fake_runner=fake_runner)
+        item = DelegatedPlaygroundProcess(
+            delegated_id=delegated_id,
+            session_id=str(state.get("session_id") or delegated_id.split("-", 1)[0]),
+            project_name=str(state.get("project_name") or project_root.name),
+            project_root=project_root,
+            backend_root=backend_root,
+            port=port,
+            process=process,
+            fake_runner=fake_runner,
+            created_at=float(state.get("created_at") or time.time()),
+            last_result={"restored_from_disk": True},
+        )
+        self._items[delegated_id] = item
+        wait_result = _wait_http(f"{item.base_url}/health", timeout=8)
+        item.last_result = {"restore": wait_result, "restored_at": time.time()}
+        if not wait_result.get("ok"):
+            output = self.read_logs(delegated_id, limit=120)
+            self.stop(delegated_id)
+            raise RuntimeError(f"Delegated Agent 恢复失败：{wait_result.get('error') or 'health check failed'}\n{output}")
+        self._save_state(item)
+        return item
+
+    def _guess_project_root(self, root_parent: Path) -> Path:
+        candidates = []
+        for path in root_parent.iterdir():
+            if not path.is_dir():
+                continue
+            if (path / "backend" / "app" / "main.py").exists():
+                candidates.append(path)
+        if not candidates:
+            raise KeyError(root_parent.name)
+        candidates.sort(key=lambda value: value.stat().st_mtime, reverse=True)
+        return candidates[0]
+
     def _drop_stopped(self) -> None:
         for delegated_id, item in list(self._items.items()):
             if item.process.poll() is not None:
                 self._items.pop(delegated_id, None)
+
+    def _load_disk_summaries(self) -> None:
+        for root_parent in self.root_dir.iterdir():
+            if not root_parent.is_dir() or root_parent.name in self._items:
+                continue
+            state = _read_json(root_parent / "playground_state.json")
+            if not state:
+                continue
+            port = int(state.get("port") or 0)
+            if port <= 0 or not _is_http_ok(f"http://127.0.0.1:{port}/health"):
+                continue
+            project_root = Path(str(state.get("project_root") or ""))
+            backend_root = Path(str(state.get("backend_root") or ""))
+            if not project_root.exists() or not backend_root.exists():
+                continue
+            process = _ExternalProcess(port)
+            item = DelegatedPlaygroundProcess(
+                delegated_id=root_parent.name,
+                session_id=str(state.get("session_id") or root_parent.name.split("-", 1)[0]),
+                project_name=str(state.get("project_name") or project_root.name),
+                project_root=project_root,
+                backend_root=backend_root,
+                port=port,
+                process=process,
+                fake_runner=bool(state.get("fake_runner", True)),
+                created_at=float(state.get("created_at") or root_parent.stat().st_mtime),
+                last_result=dict(state.get("last_result") or {"restored_running_process": True}),
+            )
+            self._items[root_parent.name] = item
 
 
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _pid_listening_on_port(port: int) -> int:
+    try:
+        result = subprocess.run(
+            ["ss", "-ltnp", f"sport = :{int(port)}"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return 0
+    for line in result.stdout.splitlines():
+        marker = "pid="
+        if marker not in line:
+            continue
+        tail = line.split(marker, 1)[1]
+        number = tail.split(",", 1)[0].strip()
+        try:
+            return int(number)
+        except ValueError:
+            continue
+    return 0
 
 
 def _wait_http(url: str, timeout: float = 8) -> dict[str, Any]:
@@ -287,6 +467,24 @@ def _wait_http(url: str, timeout: float = 8) -> dict[str, Any]:
 def _get_json(url: str, timeout: int = 8) -> dict[str, Any]:
     with request.urlopen(url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _is_http_ok(url: str, timeout: int = 2) -> bool:
+    try:
+        _get_json(url, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _get_text(url: str, timeout: int = 8) -> str:
