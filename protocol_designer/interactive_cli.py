@@ -369,6 +369,8 @@ class TtydCliManager:
         self.sessions[session.session_id] = session
         summary = session.to_summary()
         public_host = str(host or "").split(":", 1)[0] or "127.0.0.1"
+        if public_host in {"127.0.0.1", "localhost", "0.0.0.0"}:
+            public_host = _detect_lan_host() or public_host
         summary["url"] = f"http://{public_host}:{port}/"
         return summary
 
@@ -492,6 +494,18 @@ def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("0.0.0.0", 0))
         return int(sock.getsockname()[1])
+
+
+def _detect_lan_host() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            host = str(sock.getsockname()[0] or "")
+            if host and not host.startswith("127."):
+                return host
+    except Exception:
+        return ""
+    return ""
 
 
 def _command_preview(command: list[str] | str) -> str:

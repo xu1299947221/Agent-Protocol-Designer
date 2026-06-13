@@ -2309,9 +2309,57 @@ function setEngValue(id,value){const el=engEl(id);if(el)el.value=value||'';}
 function loadEngineeringSettings(){setEngValue('engRunner',localStorage.getItem('apd_cli_runner')||localStorage.getItem('apd_developer_runner')||'open_claude');setEngValue('engBaseUrl',localStorage.getItem('apd_cli_base_url')||localStorage.getItem('apd_developer_base_url')||'');setEngValue('engApiKey',localStorage.getItem('apd_cli_api_key')||localStorage.getItem('apd_developer_api_key')||'');setEngValue('engModel',localStorage.getItem('apd_cli_model')||localStorage.getItem('apd_developer_model')||'');setEngValue('engCliRoot',localStorage.getItem('apd_cli_root')||localStorage.getItem('apd_developer_cli_root')||'/home/data/rag/open_claude/Openclaude-openclaude');setEngValue('engInitialPrompt',localStorage.getItem('apd_cli_initial_prompt')||'请先阅读当前项目结构，告诉我这个 Agent 工程的主要文件分别负责什么。先不要修改代码。');updateEngineeringWorkspaceInfo();}
 function saveEngineeringSettings(){localStorage.setItem('apd_cli_runner',engValue('engRunner')||'open_claude');localStorage.setItem('apd_cli_base_url',engValue('engBaseUrl').trim());localStorage.setItem('apd_cli_api_key',engValue('engApiKey').trim());localStorage.setItem('apd_cli_model',engValue('engModel').trim());localStorage.setItem('apd_cli_root',engValue('engCliRoot').trim());localStorage.setItem('apd_cli_initial_prompt',engValue('engInitialPrompt').trim());status('工程终端设置已保存');}
 function updateEngineeringWorkspaceInfo(){const el=document.getElementById('engineeringWorkspaceInfo');if(el)el.textContent=engineeringWorkspaceId?'工作区：'+engineeringWorkspaceId:'等待工作区';}
-async function ensureEngineeringWorkspace(){if(engineeringWorkspaceId){updateEngineeringWorkspaceInfo();return engineeringWorkspaceId;}const url=sessionId?`/api/dev-studio/workspaces?session_id=${encodeURIComponent(sessionId)}`:'/api/dev-studio/workspaces';const listRes=await fetch(url);const listData=await listRes.json();const list=listData.workspaces||[];if(list.length){engineeringWorkspaceId=list[0].workspace_id||'';}else{const createRes=await fetch('/api/dev-studio/workspace',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,name:localStorage.getItem('apd_delegated_project_name')||'delegated-agent-workspace'})});const created=await createRes.json();if(!createRes.ok)throw new Error(created.error||'创建工作区失败');engineeringWorkspaceId=created.workspace_id||'';}if(engineeringWorkspaceId){localStorage.setItem('apd_dev_workspace_id',engineeringWorkspaceId);updateEngineeringWorkspaceInfo();}return engineeringWorkspaceId;}
-async function startEngineeringTtyd(){const statusEl=document.getElementById('engineeringStatus');const frame=document.getElementById('engineeringTtydFrame');try{saveEngineeringSettings();if(statusEl)statusEl.textContent='正在启动工程开发终端...';const wid=await ensureEngineeringWorkspace();if(!wid)throw new Error('没有可用工程工作区');const res=await fetch(`/api/dev-studio/workspace/${encodeURIComponent(wid)}/ttyd/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runner:engValue('engRunner')||'open_claude',base_url:engValue('engBaseUrl').trim(),api_key:engValue('engApiKey').trim(),model:engValue('engModel').trim(),cli_root:engValue('engCliRoot').trim(),work_dir:'',command_template:'',initial_prompt:engValue('engInitialPrompt').trim()})});const data=await res.json();if(!res.ok)throw new Error(data.error||'ttyd 启动失败');engineeringTtydSessionId=data.session_id||'';localStorage.setItem('apd_ttyd_session_id',engineeringTtydSessionId);if(frame){frame.src=data.url;frame.style.display='block';}if(statusEl)statusEl.innerHTML=`工程终端已启动：<a href="${esc(data.url)}" target="_blank">${esc(data.url)}</a>`;status('工程开发终端已启动');}catch(e){if(statusEl)statusEl.textContent='工程终端启动失败：'+(e.message||e);status('工程终端启动失败：'+(e.message||e));}}
-async function stopEngineeringTtyd(){const frame=document.getElementById('engineeringTtydFrame');if(!engineeringTtydSessionId){status('没有运行中的工程终端');return;}try{await fetch(`/api/dev-studio/ttyd/${encodeURIComponent(engineeringTtydSessionId)}/stop`,{method:'POST'});}catch(e){}engineeringTtydSessionId='';localStorage.removeItem('apd_ttyd_session_id');if(frame){frame.src='about:blank';frame.style.display='none';}const statusEl=document.getElementById('engineeringStatus');if(statusEl)statusEl.textContent='工程终端已停止。';status('工程终端已停止');}
+async function fetchJson(url,options={}){const res=await fetch(url,options);let data={};try{data=await res.json();}catch(e){data={error:'接口没有返回 JSON'};}return {res,data};}
+async function validateEngineeringWorkspace(wid){if(!wid)return false;try{const {res}=await fetchJson(`/api/dev-studio/workspace/${encodeURIComponent(wid)}`);return res.ok;}catch(e){return false;}}
+async function ensureEngineeringWorkspace(){
+  const statusEl=document.getElementById('engineeringStatus');
+  if(engineeringWorkspaceId&&await validateEngineeringWorkspace(engineeringWorkspaceId)){updateEngineeringWorkspaceInfo();return engineeringWorkspaceId;}
+  if(engineeringWorkspaceId){localStorage.removeItem('apd_dev_workspace_id');engineeringWorkspaceId='';}
+  if(statusEl)statusEl.textContent='正在准备工程工作区...';
+  const url=sessionId?`/api/dev-studio/workspaces?session_id=${encodeURIComponent(sessionId)}`:'/api/dev-studio/workspaces';
+  const {res:listRes,data:listData}=await fetchJson(url);
+  if(!listRes.ok)throw new Error(listData.error||'读取工作区列表失败');
+  const list=listData.workspaces||[];
+  if(list.length){engineeringWorkspaceId=list[0].workspace_id||'';}
+  else{
+    const {res:createRes,data:created}=await fetchJson('/api/dev-studio/workspace',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,name:localStorage.getItem('apd_delegated_project_name')||'delegated-agent-workspace'})});
+    if(!createRes.ok)throw new Error(created.error||'创建工作区失败');
+    engineeringWorkspaceId=created.workspace_id||'';
+  }
+  if(!engineeringWorkspaceId)throw new Error('没有拿到工程工作区 ID');
+  localStorage.setItem('apd_dev_workspace_id',engineeringWorkspaceId);
+  updateEngineeringWorkspaceInfo();
+  return engineeringWorkspaceId;
+}
+function showEngineeringFrame(url){
+  const frame=document.getElementById('engineeringTtydFrame');
+  if(!frame)return;
+  frame.style.display='block';
+  frame.src='about:blank';
+  setTimeout(()=>{frame.src=url;},40);
+}
+async function startEngineeringTtyd(){
+  const statusEl=document.getElementById('engineeringStatus');
+  try{
+    saveEngineeringSettings();
+    if(statusEl)statusEl.textContent='正在启动工程开发终端：准备工作区、启动 ttyd、挂载 open_claude...';
+    const wid=await ensureEngineeringWorkspace();
+    if(!wid)throw new Error('没有可用工程工作区');
+    const {res,data}=await fetchJson(`/api/dev-studio/workspace/${encodeURIComponent(wid)}/ttyd/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runner:engValue('engRunner')||'open_claude',base_url:engValue('engBaseUrl').trim(),api_key:engValue('engApiKey').trim(),model:engValue('engModel').trim(),cli_root:engValue('engCliRoot').trim(),work_dir:'',command_template:'',initial_prompt:engValue('engInitialPrompt').trim()})});
+    if(!res.ok)throw new Error(data.error||'ttyd 启动失败');
+    engineeringTtydSessionId=data.session_id||'';
+    localStorage.setItem('apd_ttyd_session_id',engineeringTtydSessionId);
+    showEngineeringFrame(data.url);
+    if(statusEl)statusEl.innerHTML=`工程终端已启动。若右侧没有画面，点击备用入口：<a href="${esc(data.url)}" target="_blank" rel="noopener">新窗口打开 ttyd</a>`;
+    status('工程开发终端已启动');
+  }catch(e){
+    const msg=e.message||String(e);
+    if(statusEl)statusEl.innerHTML=`工程终端启动失败：${esc(msg)}<br/><span class="hint">已自动清理旧工作区缓存。请再点一次“启动 open_claude”；如果仍失败，检查 ttyd/open_claude 路径。</span>`;
+    localStorage.removeItem('apd_ttyd_session_id');
+    status('工程终端启动失败：'+msg);
+  }
+}
+async function stopEngineeringTtyd(){const frame=document.getElementById('engineeringTtydFrame');if(!engineeringTtydSessionId){localStorage.removeItem('apd_ttyd_session_id');if(frame){frame.src='about:blank';frame.style.display='none';}status('没有运行中的工程终端');return;}try{await fetch(`/api/dev-studio/ttyd/${encodeURIComponent(engineeringTtydSessionId)}/stop`,{method:'POST'});}catch(e){}engineeringTtydSessionId='';localStorage.removeItem('apd_ttyd_session_id');if(frame){frame.src='about:blank';frame.style.display='none';}const statusEl=document.getElementById('engineeringStatus');if(statusEl)statusEl.textContent='工程终端已停止。';status('工程终端已停止');}
 function renderRuntimeCard(item){return `<div class="card"><h4>${esc(item.project_name||item.delegated_id)} <span class="chip ${item.status==='running'?'ok':'warn'}">${esc(item.status||'-')}</span></h4><div class="small">ID：${esc(item.delegated_id||'')}<br/>端口：${esc(String(item.port||'-'))} · PID：${esc(String(item.pid||'-'))}<br/>内部地址：${esc(item.base_url||'')}</div><div class="quick-row" style="margin-top:8px"><button onclick="selectRuntime('${esc(item.delegated_id||'')}')">选择</button><button onclick="stopRuntime('${esc(item.delegated_id||'')}')">停止</button></div></div>`}
 async function refreshRuntimes(){try{const res=await fetch('/api/delegated-playground/list');const data=await res.json();const items=data.items||[];if(!currentDelegatedId&&items[0])selectRuntime(items[0].delegated_id,false);runtimeList.innerHTML=items.length?items.map(renderRuntimeCard).join(''):'<div class="small">暂无运行实例。点击“生成并启动”。</div>';}catch(e){runtimeList.innerHTML='<div class="small">加载失败：'+esc(e.message||e)+'</div>';}}
 function selectRuntime(id,notify=true){currentDelegatedId=id;localStorage.setItem('apd_delegated_id',id);if(notify)status('已选择运行实例：'+id);document.getElementById('sessionInfo').textContent='运行实例：'+id;loadRuntimeConfig();}
