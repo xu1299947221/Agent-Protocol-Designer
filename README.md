@@ -62,6 +62,8 @@ APD 后续方向不是普通 Agent Builder，而是面向定制 Agent 开发的 
 - `docs/agent_harness_architecture_gaps.md`
 - `docs/agent_architecture_guide.md`
 - `docs/apd_next_tasks.md`
+- `docs/apd_future_architecture_outlook.md`
+- `docs/agent_engineering_workbench_architecture.md`
 
 当前主线：
 

@@ -1173,3 +1173,376 @@ APD 后续页面应增加：
 ```
 
 第一阶段先不要求自动改代码，重点是把增量变更链路显式化、可追踪、可复用。
+
+## 23. 业务能力扩展原则：优先扩展 Tool Registry，而不是改 open_claude 核心
+
+本节同样是 APD 整体架构原则，不只针对 open_claude 路线。
+
+随着 APD 演进，业务 Agent 的能力会不断增加。正确方向不是每来一个新业务需求就修改 open_claude 核心，而是：
+
+```text
+open_claude 核心尽量稳定。
+业务能力通过 APD 协议 + Tool Registry + 业务工具接口持续扩展。
+```
+
+### 23.1 总体链路
+
+```text
+用户新业务需求
+  ↓
+APD 首页对话补充协议
+  ↓
+APD 更新：
+- operations
+- validators
+- tool_registry
+- permission_policy
+- eval_cases
+  ↓
+生成 Task Pack
+  ↓
+open_claude Engine 读取 Task Pack
+  ↓
+调用业务工具接口
+  ↓
+完成任务并返回结果 / 产物 / Trace
+```
+
+### 23.2 各层职责
+
+| 层 | 负责什么 |
+|---|---|
+| APD 协议层 | 定义业务能力、操作边界、工具使用规则、验收标准 |
+| Tool Registry | 注册业务工具接口的名称、输入输出、权限、风险、版本 |
+| 业务工具接口 | 真实执行业务能力，例如解析文件、查知识库、导出文档 |
+| Delegated Runtime | 组装 Task Pack、管理 Job、Trace、Artifact、权限、会话 |
+| open_claude Engine | 读取任务、推理计划、按规则调用工具、整理结果 |
+| 业务 Agent 工程 | 把以上能力部署成某个具体 Agent 服务 |
+
+### 23.3 新需求如何扩展
+
+例如用户提出：
+
+```text
+投标 Agent 还要能自动生成商务偏离表。
+```
+
+不应该优先改 open_claude 核心。
+
+正确流程：
+
+```text
+1. 回 APD 首页补充业务需求。
+2. 协议新增 operation：generate_commercial_deviation_table。
+3. Tool Registry 新增工具：generate_deviation_table。
+4. 定义 input_schema / output_schema / 风险 / 权限 / 失败策略。
+5. 业务工具接口实现真实逻辑。
+6. Task Pack 告诉 open_claude 什么时候可以调用这个工具。
+7. 调试台验证结果。
+```
+
+### 23.4 工具接口描述格式
+
+每个工具至少应有结构化描述：
+
+```json
+{
+  "name": "parse_tender_file",
+  "description": "解析招标文件，提取评分办法、章节要求、格式要求和交付物要求",
+  "input_schema": {
+    "file_id": "string",
+    "parse_mode": "outline|full|requirements"
+  },
+  "output_schema": {
+    "sections": [],
+    "requirements": [],
+    "scoring_rules": []
+  },
+  "risk_level": "medium",
+  "permissions": ["read_uploaded_files"],
+  "timeout_seconds": 120,
+  "failure_modes": ["file_not_supported", "parse_incomplete", "ambiguous_structure"],
+  "examples": []
+}
+```
+
+这份描述不只是给 LLM 看的，也是给 Runtime 做校验、权限、审计和迁移用的。
+
+### 23.5 工具接入形态
+
+业务工具接口可以有多种形态：
+
+```text
+HTTP Tool：调用内部服务 API
+CLI Tool：执行受控命令行工具
+MCP Tool：通过 MCP 暴露工具能力
+Python Tool：本地 Python 函数或脚本
+Service Tool：企业内部微服务接口
+```
+
+open_claude Engine 后续应优先支持标准工具接入协议，而不是把每个业务能力硬编码进核心。
+
+### 23.6 什么时候才改 open_claude 核心
+
+| 变化或问题 | 是否改 open_claude 核心 |
+|---|---|
+| 新增一个投标业务工具 | 否 |
+| 新增一个文档导出工具 | 否 |
+| 工具参数变了 | 否，改 Tool Registry 和协议 |
+| 某个业务规则变了 | 否，改 APD 协议 |
+| open_claude 不能稳定读取 Task Pack | 是 |
+| open_claude 不能输出结构化事件 | 是 |
+| open_claude 不支持 HTTP/MCP 工具调用 | 是 |
+| 多用户 Job 隔离有问题 | 是 |
+| 权限只能靠 prompt，缺少程序校验 | 是 |
+
+判断原则：
+
+```text
+业务能力变化 → 改协议和工具。
+执行引擎底座缺能力 → 才改 open_claude。
+```
+
+### 23.7 与增量模式的关系
+
+这条原则和上一节的增量模式是一体的。
+
+新业务需求通常会产生：
+
+```text
+protocol_diff
+  ↓
+tool_registry_diff
+  ↓
+migration_task_pack
+  ↓
+业务工具接口新增或修改
+  ↓
+已有 Agent 工程同步
+```
+
+因此，APD 的增量迁移不应只比较 operation，也要比较 Tool Registry。
+
+### 23.8 这个原则的好处
+
+- open_claude 核心保持稳定，不被业务需求污染。
+- 每个业务 Agent 可以通过工具接口扩展能力。
+- APD 可以记录“这个 Agent 为什么能调用这个工具”。
+- 工具有 schema、权限、风险、版本，方便审计和迁移。
+- 新需求可以走协议 diff，而不是直接乱改代码。
+- 未来可以兼容 HTTP、CLI、MCP、Python、本地服务等多种工具接入方式。
+
+最终公式：
+
+```text
+Agent 能力持续扩展
+= APD 协议增量
++ Tool Registry 增量
++ 业务工具接口增量
++ Task Pack 增量
+```
+
+而不是：
+
+```text
+每来一个业务需求就改 open_claude 核心。
+```
+
+## 24. 托管型 Agent 输出契约：回复不是唯一交付物
+
+本节是 APD 整体输出模型原则，同时影响 Delegated Agent 路线和自研 Runtime 路线。
+
+托管型 Agent 的输出不能只理解成聊天文本。
+
+核心原则：
+
+```text
+托管型 Agent 的输出 = 文本回复 + 文件产物 + 结构化结果 + 过程与诊断。
+```
+
+也就是说：
+
+```text
+final_answer 只是给用户看的解释。
+artifacts 才是很多业务 Agent 的真正交付物。
+```
+
+### 24.1 最小输出类型
+
+至少应支持两类：
+
+```text
+1. final_answer：文本回复
+2. artifacts：生成文件
+```
+
+完整建议：
+
+```text
+Agent Output
+  ├── final_answer        给用户看的文本回复
+  ├── artifacts           文件产物，例如 docx、xlsx、pdf、md、json
+  ├── structured_result   结构化结果，用于程序读取
+  ├── diagnostics         风险、缺口、异常、质量提示
+  ├── trace               执行过程记录
+  └── next_actions        下一步建议
+```
+
+### 24.2 输出契约示例
+
+```json
+{
+  "final_answer": "已生成技术标初稿，请查看附件。当前有 3 个评分点素材不足，建议补充后再导出正式版。",
+  "artifacts": [
+    {
+      "name": "技术标初稿.docx",
+      "type": "docx",
+      "path": "artifacts/技术标初稿.docx",
+      "description": "可编辑投标文件初稿",
+      "editable": true,
+      "version": "v1"
+    },
+    {
+      "name": "评分点覆盖表.xlsx",
+      "type": "xlsx",
+      "path": "artifacts/评分点覆盖表.xlsx",
+      "description": "评分点与响应内容覆盖情况"
+    },
+    {
+      "name": "素材缺口清单.md",
+      "type": "markdown",
+      "path": "artifacts/素材缺口清单.md",
+      "description": "需要人工补充的素材列表"
+    }
+  ],
+  "structured_result": {
+    "status": "completed",
+    "coverage_score": 0.82,
+    "missing_materials_count": 3,
+    "warnings": ["部分评分点缺少可追溯素材"]
+  },
+  "diagnostics": [
+    {
+      "level": "warning",
+      "message": "第 4.2 节缺少类似项目案例素材"
+    }
+  ],
+  "trace": {
+    "summary": "解析招标文件 → 生成目录 → 检索素材 → 生成章节 → 导出 docx"
+  },
+  "next_actions": [
+    "补充类似项目业绩材料",
+    "确认技术方案章节是否需要扩写"
+  ]
+}
+```
+
+### 24.3 APD 协议层要求
+
+APD 设计 Agent 时必须明确：
+
+```text
+这个 Agent 最终交付什么？
+只是文字，还是文件？
+文件格式是什么？
+文件是否可编辑？
+是否需要版本管理？
+是否需要下载？
+是否需要人工确认？
+是否需要结构化结果给程序继续处理？
+```
+
+因此，Artifact Model / 产物模型 必须提升为核心字段。
+
+APD 协议应至少描述：
+
+```text
+artifact type
+artifact format
+artifact owner
+artifact lifecycle
+artifact versioning
+artifact validation
+artifact download policy
+artifact editability
+artifact retention policy
+```
+
+### 24.4 Delegated Runtime 要求
+
+Delegated Runtime 不能只解析 stdout。
+
+它应该稳定读取：
+
+```text
+artifacts/result.json
+artifacts/report.md
+artifacts/manifest.json
+artifacts/*.docx
+artifacts/*.xlsx
+artifacts/*.pdf
+```
+
+前端应分区展示：
+
+```text
+文本回复
+文件下载
+结构化结果
+风险提示
+下一步建议
+过程 Trace
+```
+
+### 24.5 open_claude Engine 要求
+
+open_claude Engine 后续应支持稳定结果契约：
+
+```text
+写 final_answer
+写 result.json
+写 artifact manifest
+输出 artifact_written 事件
+输出 job_completed 事件时带 result_path
+```
+
+APD 不应从终端文本里猜最终结果。
+
+正确方式是：
+
+```text
+Engine 写稳定结果文件。
+Runtime 读取结果契约。
+前端按类型展示。
+```
+
+### 24.6 对自研 Runtime 路线的要求
+
+自研 Runtime 路线也必须遵守输出契约。
+
+不能只实现：
+
+```text
+return "一段文本"
+```
+
+而应实现：
+
+```text
+return AgentOutput(
+  final_answer=..., 
+  artifacts=..., 
+  structured_result=..., 
+  diagnostics=..., 
+  trace=..., 
+  next_actions=...
+)
+```
+
+否则后续无法做产物版本、下载、回滚、评测和审计。
+
+### 24.7 一句话总结
+
+```text
+托管型 Agent 的交付物不是一段话，而是一组可解释、可下载、可追踪、可继续处理的结果包。
+```

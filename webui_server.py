@@ -2700,7 +2700,17 @@ HTML = r"""
     .apd-arch-details ul { margin:7px 0 0 18px; padding:0; }
     .apd-arch-note { margin-top:14px; border:1px solid #164e63; border-radius:16px; padding:12px; background:rgba(8,47,73,.36); color:#dbeafe; font-size:13px; line-height:1.65; }
     .apd-arch-note strong { color:#67e8f9; }
-    @media (max-width: 980px) { .apd-arch-flow, .apd-arch-details { grid-template-columns:1fr; } .apd-arch-title-row { flex-direction:column; } }
+    .apd-arch-loop { margin-top:14px; border:1px solid #475569; border-radius:20px; background:linear-gradient(135deg, rgba(30,41,59,.74), rgba(2,6,23,.82)); padding:15px; }
+    .apd-arch-loop-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; }
+    .apd-arch-loop-head h2 { margin:0; padding:0; border:0; color:#f8fafc; font-size:17px; }
+    .apd-arch-loop-head p { margin:5px 0 0; color:#cbd5e1; font-size:13px; line-height:1.55; }
+    .apd-arch-loop-tag { border:1px solid #f59e0b; color:#fde68a; background:rgba(120,53,15,.26); border-radius:999px; padding:4px 8px; font-size:12px; font-weight:800; white-space:nowrap; }
+    .apd-arch-loop-steps { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; align-items:stretch; }
+    .apd-arch-loop-step { border:1px solid #334155; border-radius:14px; background:rgba(2,6,23,.52); padding:10px; min-height:86px; }
+    .apd-arch-loop-step strong { display:block; color:#fef3c7; font-size:13px; }
+    .apd-arch-loop-step span { display:block; margin-top:5px; color:#cbd5e1; font-size:12px; line-height:1.45; }
+    .apd-arch-loop-arrow { display:none; }
+    @media (max-width: 980px) { .apd-arch-flow, .apd-arch-details, .apd-arch-loop-steps { grid-template-columns:1fr; } .apd-arch-title-row, .apd-arch-loop-head { flex-direction:column; } }
     .case-body table { width:100%; border-collapse:collapse; margin:12px 0 18px; font-size:13px; }
     .case-body th, .case-body td { border:1px solid var(--border); padding:8px 10px; vertical-align:top; }
     .case-body th { background:#111827; color:#f8fafc; }
@@ -4262,7 +4272,23 @@ function renderApdArchitectureMap() {
             <div>想先验证业务效果，选委托型真实调试。想长期沉淀完全自研的业务 Agent，选自研工程开发。两条路线共享同一份 APD 协议，但执行模型不同。</div>
           </details>
         </div>
-        <div class="apd-arch-note"><strong>一句话：</strong>APD 不是直接等于 Agent。APD 先设计协议，再把协议送进两条不同工程路线：一条借 open_claude 快速落地，一条自研 Runtime 长期沉淀。</div>
+        <section class="apd-arch-loop">
+          <div class="apd-arch-loop-head">
+            <div>
+              <h2>第三块：持续演进闭环</h2>
+              <p>APD 不应该只是一次性生成脚手架。已有 Agent 遇到新业务需求时，应先回到协议层增量更新，再把变化迁移到已有工程。</p>
+            </div>
+            <span class="apd-arch-loop-tag">增量迁移</span>
+          </div>
+          <div class="apd-arch-loop-steps">
+            <div class="apd-arch-loop-step"><strong>1. 新业务需求</strong><span>用户不是重开项目，而是在同一会话里补充新能力、新边界或新规则。</span></div>
+            <div class="apd-arch-loop-step"><strong>2. 协议 v1 → v2</strong><span>首页对话更新 APD 协议，形成新的对象、操作、权限、产物或评测要求。</span></div>
+            <div class="apd-arch-loop-step"><strong>3. protocol_diff</strong><span>系统识别协议变化，判断影响范围、风险等级和是否需要人工确认。</span></div>
+            <div class="apd-arch-loop-step"><strong>4. migration_task_pack</strong><span>把协议变化转成工程迁移任务，发送给工程开发台或真实调试台。</span></div>
+            <div class="apd-arch-loop-step"><strong>5. 同步工程并保存版本</strong><span>AI 修改已有 Agent 工程，调试通过后保存版本，必要时支持回滚。</span></div>
+          </div>
+        </section>
+        <div class="apd-arch-note"><strong>一句话：</strong>APD 不是一次性 Agent 生成器。APD 先设计协议，再选择落地路线，最后通过协议 diff 和迁移任务持续演进已有 Agent 工程。</div>
       </div>
     </section>`;
 }
