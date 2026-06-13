@@ -2881,9 +2881,7 @@ HTML = r"""
             <span class="export-header-actions">
               <button onclick="downloadScaffold()">生成可运行 Demo zip</button>
               <button onclick="downloadDelegatedAgent()" class="primary">生成 Delegated Agent zip</button>
-              <button onclick="openDelegatedInspector()" class="primary">打开真实调试台</button>
-              <button onclick="openDemoPlayground()">在线运行 Demo</button>
-              <button onclick="openCliCollabAssistant()">打开工程开发台</button>
+              <span class="pill">运行和开发入口请使用页面顶部 2/3 按钮</span>
               <span class="export-actions" id="exportActions">
                 <button type="button" class="export-toggle" onclick="toggleExportMenu(event)">更多导出 ▾</button>
                 <span class="menu-panel" onclick="event.stopPropagation()">
@@ -3005,9 +3003,9 @@ OPENAI_MODEL=your-model</code></pre>
               <button onclick="downloadScaffold()">下载 Demo zip</button>
             </div>
             <div class="dev-entry-card">
-              <h3>5. Demo Playground</h3>
-              <p>不下载 zip，直接在 APD 内生成、启动并测试当前 Agent Demo。</p>
-              <button onclick="openDemoPlayground()" class="primary">在线运行 Demo</button>
+              <h3>5. 真实调试台</h3>
+              <p>在线运行和真实调试已统一到顶部“3 真实调试台”。这里不再保留旧 Demo Playground 入口。</p>
+              <button onclick="openDelegatedInspector()" class="primary">打开顶部统一调试台</button>
             </div>
             <div class="dev-entry-card">
               <h3>6. 沙箱验证</h3>
