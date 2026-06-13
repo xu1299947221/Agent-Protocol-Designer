@@ -2260,11 +2260,19 @@ DELEGATED_INSPECTOR_HTML = r"""
       <div class="card">
         <h3>怎么用</h3>
         <div class="small">
-          1. 默认使用真实 open_claude，点击“生成并启动”。<br/>
+          1. 第一次使用，或协议大改后，点“生成并启动”。<br/>
           2. 左侧像最终用户一样和真实 Agent 对话。<br/>
           3. 右侧上方是工程开发终端，下方是过程与诊断。<br/>
           4. 如果终端太小，点“放大终端”在当前页面内放大查看。<br/>
-          5. 改完代码后，点“重启当前 Agent”验证是否生效。
+          5. open_claude 改完代码后，点页面顶部“重启当前 Agent”验证是否生效。
+        </div>
+      </div>
+      <div class="card">
+        <h3>生成并启动 vs 重启当前 Agent</h3>
+        <div class="small">
+          <b>生成并启动</b>：根据当前 APD 协议重新生成一份 Agent 工程，并启动新的运行实例。适合第一次启动、协议大改、旧工程坏了重建。<br/><br/>
+          <b>重启当前 Agent</b>：不重新生成工程，只重启当前已生成工程的服务进程，让右侧 open_claude 改过的代码生效。适合日常开发调试。<br/><br/>
+          简单判断：<b>造新工程用“生成并启动”</b>，<b>加载代码改动用“重启当前 Agent”</b>。
         </div>
       </div>
       <div class="field"><label>项目名</label><input id="projectName" placeholder="delegated-agent-demo" /></div>
